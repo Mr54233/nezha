@@ -157,11 +157,12 @@ function App() {
       const chunks = await Promise.all(
         loadedProjects.map((p) => invoke<Task[]>("load_project_tasks", { projectId: p.id })),
       );
-      setTasks(chunks.flat());
+      const allTasks = chunks.flat();
+      setTasks(allTasks);
     }
 
     init().catch(console.error);
-  }, []);
+  }, [tm.terminalSizeRef]);
 
   // Tauri event listeners (agent-output is handled inside useTerminalManager)
   useEffect(() => {
@@ -568,9 +569,18 @@ function App() {
               onNewTask={() =>
                 updateProjectView(project.id, { selectedTaskId: null, isNewTask: true })
               }
-              onSelectTask={(id) =>
-                updateProjectView(project.id, { selectedTaskId: id, isNewTask: false })
-              }
+              onSelectTask={(id) => {
+                updateProjectView(project.id, { selectedTaskId: id, isNewTask: false });
+                // Auto-resume orphaned active tasks (app was restarted)
+                const task = tasks.find((t) => t.id === id);
+                if (task && isActiveTaskStatus(task.status)) {
+                  const sessionId =
+                    task.agent === "codex" ? task.codexSessionId : task.claudeSessionId;
+                  if (sessionId && !tm.hasTaskBuffer(id)) {
+                    handleResumeTask(id);
+                  }
+                }
+              }}
               onDeleteTask={handleDeleteTask}
               onDeleteAllTasks={() => handleDeleteAllTasks(project)}
               onToggleTaskStar={handleToggleTaskStar}
