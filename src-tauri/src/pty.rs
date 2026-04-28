@@ -405,6 +405,14 @@ pub async fn run_task(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<(), String> {
+    // Prevent duplicate: reject if task already has active PTY handles
+    {
+        let tm = app.state::<TaskManager>();
+        if tm.pty_masters.lock().contains_key(&task_id) {
+            return Err(format!("Task {} already has an active PTY session", task_id));
+        }
+    }
+
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: rows.unwrap_or(50),
@@ -574,6 +582,14 @@ pub async fn resume_task(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<(), String> {
+    // Prevent duplicate resume: reject if task already has active PTY handles
+    {
+        let tm = app.state::<TaskManager>();
+        if tm.pty_masters.lock().contains_key(&task_id) {
+            return Err(format!("Task {} already has an active PTY session", task_id));
+        }
+    }
+
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: rows.unwrap_or(50),
