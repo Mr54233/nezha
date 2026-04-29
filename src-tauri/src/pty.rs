@@ -164,9 +164,8 @@ fn setup_env(cmd: &mut CommandBuilder) {
     cmd.env("COLORTERM", "truecolor");
 }
 
-/// 将 PTY master/writer/child 注册到 TaskManager 的三个 HashMap 中。
 /// RAII guard that removes the task from `pending_resumes` on drop
-/// unless explicitly marked as done (i.e. `register_pty_handles` succeeded).
+/// unless `register_pty_handles` succeeded.
 struct PendingGuard<'a> {
     tm: &'a TaskManager,
     task_id: String,
@@ -181,6 +180,7 @@ impl<'a> Drop for PendingGuard<'a> {
     }
 }
 
+/// Register PTY master/writer/child handles into TaskManager.
 fn register_pty_handles(
     task_manager: &TaskManager,
     id: &str,

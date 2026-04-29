@@ -312,11 +312,14 @@ function App() {
   }
 
   function handleResumeTask(taskId: string): Promise<void> {
+    if (resumingTaskIds.current.has(taskId)) return Promise.resolve();
+    resumingTaskIds.current.add(taskId);
+
     const task = tasks.find((t) => t.id === taskId);
     const sessionId = task?.agent === "codex" ? task.codexSessionId : task?.claudeSessionId;
-    if (!task || !sessionId) return Promise.resolve();
+    if (!task || !sessionId) { resumingTaskIds.current.delete(taskId); return Promise.resolve(); }
     const project = projects.find((p) => p.id === task.projectId);
-    if (!project) return Promise.resolve();
+    if (!project) { resumingTaskIds.current.delete(taskId); return Promise.resolve(); }
 
     // Reset task status, clear buffer, and bump run counter to remount the terminal
     setTasks((prev) => {
@@ -344,6 +347,8 @@ function App() {
       const msg = err instanceof Error ? err.message : String(err);
       tm.writeErrorToTerminal(taskId, `\r\nError: ${msg}\r\n`);
       updateTaskStatus(taskId, "failed", undefined, msg);
+    }).finally(() => {
+      resumingTaskIds.current.delete(taskId);
     });
   }
 
@@ -572,16 +577,12 @@ function App() {
               }
               onSelectTask={(id) => {
                 updateProjectView(project.id, { selectedTaskId: id, isNewTask: false });
-                // Auto-resume orphaned active tasks (app was restarted)
                 const task = tasks.find((t) => t.id === id);
-                if (task && isActiveTaskStatus(task.status) && !resumingTaskIds.current.has(id)) {
+                if (task && isActiveTaskStatus(task.status)) {
                   const sessionId =
                     task.agent === "codex" ? task.codexSessionId : task.claudeSessionId;
                   if (sessionId && !tm.hasTaskBuffer(id)) {
-                    resumingTaskIds.current.add(id);
-                    handleResumeTask(id).finally(() => {
-                      resumingTaskIds.current.delete(id);
-                    });
+                    handleResumeTask(id);
                   }
                 }
               }}
