@@ -165,6 +165,22 @@ fn setup_env(cmd: &mut CommandBuilder) {
 }
 
 /// 将 PTY master/writer/child 注册到 TaskManager 的三个 HashMap 中。
+/// RAII guard that removes the task from `pending_resumes` on drop
+/// unless explicitly marked as done (i.e. `register_pty_handles` succeeded).
+struct PendingGuard<'a> {
+    tm: &'a TaskManager,
+    task_id: String,
+    done: bool,
+}
+
+impl<'a> Drop for PendingGuard<'a> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.tm.pending_resumes.lock().remove(&self.task_id);
+        }
+    }
+}
+
 fn register_pty_handles(
     task_manager: &TaskManager,
     id: &str,
@@ -405,13 +421,19 @@ pub async fn run_task(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<(), String> {
-    // Prevent duplicate: reject if task already has active PTY handles
+    // Prevent duplicate: insert into pending_resumes atomically;
+    // duplicate calls return Ok(()) to avoid frontend error messages.
     {
         let tm = app.state::<TaskManager>();
-        if tm.pty_masters.lock().contains_key(&task_id) {
-            return Err(format!("Task {} already has an active PTY session", task_id));
+        if !tm.pending_resumes.lock().insert(task_id.clone()) {
+            return Ok(());
         }
     }
+    let mut guard = PendingGuard {
+        tm: &task_manager,
+        task_id: task_id.clone(),
+        done: false,
+    };
 
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -482,6 +504,7 @@ pub async fn run_task(
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     register_pty_handles(&task_manager, &task_id, pair.master, writer, child)?;
+    guard.done = true;
 
     let _ = app.emit(
         "task-status",
@@ -582,13 +605,19 @@ pub async fn resume_task(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<(), String> {
-    // Prevent duplicate resume: reject if task already has active PTY handles
+    // Prevent duplicate resume: insert into pending_resumes atomically;
+    // duplicate calls return Ok(()) to avoid frontend error messages.
     {
         let tm = app.state::<TaskManager>();
-        if tm.pty_masters.lock().contains_key(&task_id) {
-            return Err(format!("Task {} already has an active PTY session", task_id));
+        if !tm.pending_resumes.lock().insert(task_id.clone()) {
+            return Ok(());
         }
     }
+    let mut guard = PendingGuard {
+        tm: &task_manager,
+        task_id: task_id.clone(),
+        done: false,
+    };
 
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -624,6 +653,7 @@ pub async fn resume_task(
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
     register_pty_handles(&task_manager, &task_id, pair.master, writer, child)?;
+    guard.done = true;
 
     let _ = app.emit(
         "task-status",

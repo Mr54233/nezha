@@ -29,6 +29,9 @@ pub struct TaskManager {
     pub(crate) codex_sessions: Mutex<HashMap<String, CodexSessionInfo>>,
     pub(crate) claude_sessions: Mutex<HashMap<String, ClaudeSessionInfo>>,
     pub(crate) claimed_session_paths: Mutex<HashSet<String>>,
+    /// Prevents concurrent resume/run for the same task. Insert succeeds only once;
+    /// duplicates return Ok(()) to avoid misleading error messages in the frontend.
+    pub(crate) pending_resumes: Mutex<HashSet<String>>,
     /// Persistent `codex app-server` process reused across `read_usage_snapshot` calls.
     pub(crate) codex_rpc: Arc<Mutex<Option<CodexRpcClient>>>,
 }
@@ -43,6 +46,7 @@ impl TaskManager {
         masters.remove(id);
         writers.remove(id);
         children.remove(id);
+        self.pending_resumes.lock().remove(id);
     }
 }
 
@@ -64,6 +68,7 @@ pub fn run() {
             codex_sessions: Mutex::new(HashMap::new()),
             claude_sessions: Mutex::new(HashMap::new()),
             claimed_session_paths: Mutex::new(HashSet::new()),
+            pending_resumes: Mutex::new(HashSet::new()),
             codex_rpc: Arc::new(Mutex::new(None)),
         })
         .plugin(tauri_plugin_opener::init())
