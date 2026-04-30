@@ -321,7 +321,20 @@ function App() {
     const project = projects.find((p) => p.id === task.projectId);
     if (!project) { resumingTaskIds.current.delete(taskId); return Promise.resolve(); }
 
-    return invoke<void>("resume_task", {
+    // Reset terminal before invoke so data from the new PTY flows into a clean buffer
+    setTasks((prev) => {
+      const next = prev.map((t) =>
+        t.id === taskId
+          ? { ...t, status: "pending" as TaskStatus, attentionRequestedAt: undefined }
+          : t,
+      );
+      persistProjectTasks(task.projectId, next, showToast, formatSaveTasksError);
+      return next;
+    });
+    tm.resetTaskTerminal(taskId);
+    setTaskRunCounts((prev) => ({ ...prev, [taskId]: (prev[taskId] ?? 0) + 1 }));
+
+    return invoke<{ started: boolean }>("resume_task", {
       taskId,
       projectPath: project.path,
       agent: task.agent,
@@ -330,19 +343,8 @@ function App() {
       permissionMode: task.permissionMode,
       cols: tm.terminalSizeRef.current.cols,
       rows: tm.terminalSizeRef.current.rows,
-    }).then(() => {
-      // Only reset terminal after backend confirms success
-      setTasks((prev) => {
-        const next = prev.map((t) =>
-          t.id === taskId
-            ? { ...t, status: "pending" as TaskStatus, attentionRequestedAt: undefined }
-            : t,
-        );
-        persistProjectTasks(task.projectId, next, showToast, formatSaveTasksError);
-        return next;
-      });
-      tm.resetTaskTerminal(taskId);
-      setTaskRunCounts((prev) => ({ ...prev, [taskId]: (prev[taskId] ?? 0) + 1 }));
+    }).then((result) => {
+      if (!result.started) return;
     }).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       tm.writeErrorToTerminal(taskId, `\r\nError: ${msg}\r\n`);

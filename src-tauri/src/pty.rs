@@ -179,6 +179,35 @@ impl<'a> Drop for PendingGuard<'a> {
     }
 }
 
+/// spawn_command 成功后、注册进 TaskManager 前失败时自动 kill child。
+struct ChildGuard {
+    child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
+}
+
+impl ChildGuard {
+    fn new(child: Box<dyn portable_pty::Child + Send + Sync>) -> Self {
+        Self { child: Some(child) }
+    }
+    fn into_inner(mut self) -> Box<dyn portable_pty::Child + Send + Sync> {
+        self.child.take().expect("child already taken")
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+        }
+    }
+}
+
+/// run_task / resume_task 的返回值，告诉前端这次是否真正启动了 PTY。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStartResult {
+    pub started: bool,
+}
+
 /// 将 PTY master/writer/child 注册到 TaskManager。
 fn register_pty_handles(
     task_manager: &TaskManager,
@@ -186,7 +215,7 @@ fn register_pty_handles(
     master: Box<dyn portable_pty::MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
-) -> Result<(), String> {
+) {
     task_manager
         .pty_masters
         .lock()
@@ -199,7 +228,6 @@ fn register_pty_handles(
         .child_handles
         .lock()
         .insert(id.to_string(), Arc::new(std::sync::Mutex::new(child)));
-    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -419,12 +447,12 @@ pub async fn run_task(
     images: Option<Vec<String>>,
     cols: Option<u16>,
     rows: Option<u16>,
-) -> Result<(), String> {
+) -> Result<TaskStartResult, String> {
     // 原子去重：已在启动中则直接返回。
     {
         let tm = app.state::<TaskManager>();
         if !tm.pending_resumes.lock().insert(task_id.clone()) {
-            return Ok(());
+            return Ok(TaskStartResult { started: false });
         }
     }
     let mut guard = PendingGuard {
@@ -498,10 +526,11 @@ pub async fn run_task(
     }
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let child_guard = ChildGuard::new(child);
     drop(pair.slave);
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    register_pty_handles(&task_manager, &task_id, pair.master, writer, child)?;
+    register_pty_handles(&task_manager, &task_id, pair.master, writer, child_guard.into_inner());
     guard.done = true;
 
     let _ = app.emit(
@@ -534,7 +563,7 @@ pub async fn run_task(
     );
     spawn_exit_monitor(app, task_id, project_path, is_codex);
 
-    Ok(())
+    Ok(TaskStartResult { started: true })
 }
 
 #[tauri::command]
@@ -602,12 +631,12 @@ pub async fn resume_task(
     permission_mode: String,
     cols: Option<u16>,
     rows: Option<u16>,
-) -> Result<(), String> {
+) -> Result<TaskStartResult, String> {
     // 原子去重：已在恢复中则直接返回。
     {
         let tm = app.state::<TaskManager>();
         if !tm.pending_resumes.lock().insert(task_id.clone()) {
-            return Ok(());
+            return Ok(TaskStartResult { started: false });
         }
     }
     let mut guard = PendingGuard {
@@ -646,10 +675,11 @@ pub async fn resume_task(
     }
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let child_guard = ChildGuard::new(child);
     drop(pair.slave);
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    register_pty_handles(&task_manager, &task_id, pair.master, writer, child)?;
+    register_pty_handles(&task_manager, &task_id, pair.master, writer, child_guard.into_inner());
     guard.done = true;
 
     let _ = app.emit(
@@ -682,7 +712,7 @@ pub async fn resume_task(
     );
     spawn_exit_monitor(app, task_id, project_path, is_codex);
 
-    Ok(())
+    Ok(TaskStartResult { started: true })
 }
 
 #[tauri::command]
@@ -757,10 +787,11 @@ pub async fn open_shell(
     setup_env(&mut cmd);
 
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let child_guard = ChildGuard::new(child);
     drop(pair.slave);
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
-    register_pty_handles(&task_manager, &shell_id, pair.master, writer, child)?;
+    register_pty_handles(&task_manager, &shell_id, pair.master, writer, child_guard.into_inner());
 
     // Shell 退出后清理 TaskManager 中的残留句柄
     let app_cleanup = app.clone();
