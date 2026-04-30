@@ -34,7 +34,7 @@ fn has_task_session(app: &AppHandle, task_id: &str, is_codex: bool) -> bool {
     }
 }
 
-/// 任务结束后，等待会话注册完成，最长等待 500ms。
+/// 任务结束后，等待会话注册完成，最长等待 5s。
 fn wait_for_session(app: &AppHandle, task_id: &str, is_codex: bool) {
     let deadline = Instant::now() + SESSION_WAIT_MAX;
     while Instant::now() < deadline {
@@ -164,8 +164,7 @@ fn setup_env(cmd: &mut CommandBuilder) {
     cmd.env("COLORTERM", "truecolor");
 }
 
-/// RAII guard that removes the task from `pending_resumes` on drop
-/// unless `register_pty_handles` succeeded.
+/// RAII 守卫：PTY 注册失败时自动从 `pending_resumes` 移除 task_id。
 struct PendingGuard<'a> {
     tm: &'a TaskManager,
     task_id: String,
@@ -180,7 +179,7 @@ impl<'a> Drop for PendingGuard<'a> {
     }
 }
 
-/// Register PTY master/writer/child handles into TaskManager.
+/// 将 PTY master/writer/child 注册到 TaskManager。
 fn register_pty_handles(
     task_manager: &TaskManager,
     id: &str,
@@ -421,8 +420,7 @@ pub async fn run_task(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<(), String> {
-    // Prevent duplicate: insert into pending_resumes atomically;
-    // duplicate calls return Ok(()) to avoid frontend error messages.
+    // 原子去重：已在启动中则直接返回。
     {
         let tm = app.state::<TaskManager>();
         if !tm.pending_resumes.lock().insert(task_id.clone()) {
@@ -605,8 +603,7 @@ pub async fn resume_task(
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<(), String> {
-    // Prevent duplicate resume: insert into pending_resumes atomically;
-    // duplicate calls return Ok(()) to avoid frontend error messages.
+    // 原子去重：已在恢复中则直接返回。
     {
         let tm = app.state::<TaskManager>();
         if !tm.pending_resumes.lock().insert(task_id.clone()) {
