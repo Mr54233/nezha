@@ -75,6 +75,7 @@ export const TaskListItem = memo(
             right: 12,
             top: 7,
             opacity: hov ? 0 : 1,
+            filter: "var(--agent-badge-filter)",
             pointerEvents: "none",
             transition: "opacity 0.12s ease",
             zIndex: 1,
