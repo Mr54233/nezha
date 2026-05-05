@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { attachSmartCopy } from "./terminalCopyHelper";
+import type { TerminalFontSize } from "../types";
 import {
   DARK_THEME,
   LIGHT_THEME,
@@ -10,7 +11,9 @@ import {
   loadWebglAddon,
   safeFit,
   createSmartWriter,
+  applyTerminalFontSize,
 } from "./terminalShared";
+import { attachMacWebKitShiftInputFix } from "./terminalInputFix";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalViewProps {
@@ -21,6 +24,7 @@ interface TerminalViewProps {
   ) => number;
   onReady?: (generation: number) => void;
   isDark: boolean;
+  terminalFontSize: TerminalFontSize;
   isActive?: boolean;
   initialData?: string;
   initialSnapshot?: string;
@@ -33,6 +37,7 @@ export function TerminalView({
   onRegisterTerminal,
   onReady,
   isDark,
+  terminalFontSize,
   isActive = true,
   initialData,
   initialSnapshot,
@@ -68,13 +73,14 @@ export function TerminalView({
     if (!containerRef.current) return;
     const container = containerRef.current;
 
-    const { term, fitAddon } = initTerminal(isDark);
+    const { term, fitAddon } = initTerminal(isDark, 1000, terminalFontSize);
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
     const serializeAddon = new SerializeAddon();
     term.loadAddon(serializeAddon);
     term.open(container);
+    const disposeInputFix = attachMacWebKitShiftInputFix(term);
     loadWebglAddon(term);
 
     const size = safeFit(fitAddon, term);
@@ -163,6 +169,7 @@ export function TerminalView({
       }
       onRegisterRef.current(null);
       fitAddonRef.current = null;
+      disposeInputFix();
       disposeSmartCopy();
       disposeOnData.dispose();
       if (resizeTimer) clearTimeout(resizeTimer);
@@ -188,9 +195,21 @@ export function TerminalView({
 
   useEffect(() => {
     if (terminalRef.current) {
+      terminalRef.current.options.cursorBlink = isActive;
+    }
+  }, [isActive]);
+
+  useEffect(() => {
+    if (terminalRef.current) {
       terminalRef.current.options.theme = isDark ? DARK_THEME : LIGHT_THEME;
     }
   }, [isDark]);
+
+  useEffect(() => {
+    if (!terminalRef.current || !fitAddonRef.current) return;
+    const size = applyTerminalFontSize(terminalRef.current, fitAddonRef.current, terminalFontSize);
+    if (size) notifyResize(size.cols, size.rows);
+  }, [terminalFontSize, notifyResize]);
 
   return (
     <div
