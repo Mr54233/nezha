@@ -282,13 +282,11 @@ export const task = {
   taskCardSub: { fontSize: 11, color: "var(--text-muted)", marginTop: 1 },
   agentBadge: {
     flexShrink: 0,
-    width: 22,
-    height: 22,
+    width: 14,
+    height: 14,
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 5,
-    color: "var(--text-hint)",
   },
   taskDeleteBtn: {
     flexShrink: 0,

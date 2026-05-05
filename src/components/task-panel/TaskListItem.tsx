@@ -72,10 +72,10 @@ export const TaskListItem = memo(
           style={{
             ...s.agentBadge,
             position: "absolute",
-            right: 12,
-            top: 7,
+            right: 16,
+            top: 11,
             opacity: hov ? 0 : 1,
-            filter: "var(--agent-badge-filter)",
+            filter: task.agent === "codex" ? "var(--agent-badge-filter)" : "none",
             pointerEvents: "none",
             transition: "opacity 0.12s ease",
             zIndex: 1,
