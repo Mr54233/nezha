@@ -1,14 +1,6 @@
 import type React from "react";
-import { Check, Monitor, RotateCcw } from "lucide-react";
-import type { ThemeMode, TerminalFontSize, FontFamily } from "../../types";
-import {
-  TERMINAL_FONT_SIZE_MIN,
-  TERMINAL_FONT_SIZE_MAX,
-  TERMINAL_FONT_SIZE_STEP,
-  clampTerminalFontSize,
-  DEFAULT_UI_FONT,
-  DEFAULT_MONO_FONT,
-} from "../../types";
+import { Check, Monitor } from "lucide-react";
+import type { ThemeMode } from "../../types";
 import { useI18n } from "../../i18n";
 import s from "../../styles";
 
@@ -16,24 +8,12 @@ interface ThemePanelProps {
   themeMode: ThemeMode;
   systemPrefersDark: boolean;
   onThemeModeChange: (mode: ThemeMode) => void;
-  terminalFontSize: TerminalFontSize;
-  onTerminalFontSizeChange: (size: TerminalFontSize) => void;
-  uiFontFamily: FontFamily;
-  onUiFontFamilyChange: (family: FontFamily) => void;
-  monoFontFamily: FontFamily;
-  onMonoFontFamilyChange: (family: FontFamily) => void;
 }
 
 export function ThemePanel({
   themeMode,
   systemPrefersDark,
   onThemeModeChange,
-  terminalFontSize,
-  onTerminalFontSizeChange,
-  uiFontFamily,
-  onUiFontFamilyChange,
-  monoFontFamily,
-  onMonoFontFamilyChange,
 }: ThemePanelProps) {
   const { t } = useI18n();
   const manualThemeModes: Array<Extract<ThemeMode, "dark" | "light">> = ["dark", "light"];
@@ -46,12 +26,6 @@ export function ThemePanel({
 
   function handleSystemThemeToggle() {
     onThemeModeChange(themeMode === "system" ? "light" : "system");
-  }
-
-  function handleTerminalFontSizeStep(direction: 1 | -1) {
-    onTerminalFontSizeChange(
-      clampTerminalFontSize(terminalFontSize + direction * TERMINAL_FONT_SIZE_STEP),
-    );
   }
 
   function handleManualThemeKeyDown(
@@ -464,212 +438,6 @@ export function ThemePanel({
             previewBorder: "rgba(23,27,36,0.08)",
             previewAccent: "#171b24",
           })}
-        </div>
-      </div>
-
-      {/* Terminal Font Size */}
-      <div
-        style={{
-          padding: "16px 18px",
-          borderRadius: 8,
-          border: "1px solid var(--border-dim)",
-          background: "var(--bg-subtle)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 16,
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-              {t("theme.terminalFontSize")}
-            </span>
-            <span style={{ fontSize: 11.5, color: "var(--text-hint)", lineHeight: 1.45 }}>
-              {t("theme.terminalFontSizeHint")}
-            </span>
-          </div>
-          <div
-            style={{
-              flexShrink: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              color: "var(--text-secondary)",
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-            }}
-          >
-            <input
-              type="number"
-              min={TERMINAL_FONT_SIZE_MIN}
-              max={TERMINAL_FONT_SIZE_MAX}
-              step={TERMINAL_FONT_SIZE_STEP}
-              value={terminalFontSize}
-              onChange={(e) => {
-                const next = Number(e.target.value);
-                if (Number.isFinite(next)) {
-                  onTerminalFontSizeChange(clampTerminalFontSize(next));
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  handleTerminalFontSizeStep(1);
-                  return;
-                }
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  handleTerminalFontSizeStep(-1);
-                  return;
-                }
-                if (e.key !== "Tab") {
-                  e.preventDefault();
-                }
-              }}
-              onPaste={(e) => e.preventDefault()}
-              style={{
-                width: 54,
-                height: 28,
-                padding: "0 6px",
-                borderRadius: 6,
-                border: "1px solid var(--border-medium)",
-                background: "var(--bg-card)",
-                color: "var(--text-secondary)",
-                fontSize: 12,
-                fontWeight: 600,
-                fontFamily: "var(--font-mono)",
-                textAlign: "center",
-                outline: "none",
-              }}
-            />
-            <span style={{ color: "var(--text-hint)" }}>px</span>
-          </div>
-        </div>
-      </div>
-
-      {/* UI Font Family */}
-      <div
-        style={{
-          padding: "16px 18px",
-          borderRadius: 8,
-          border: "1px solid var(--border-dim)",
-          background: "var(--bg-subtle)",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-                {t("theme.uiFontFamily")}
-              </span>
-              <button
-                onClick={() => onUiFontFamilyChange(DEFAULT_UI_FONT)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-hint)",
-                  fontSize: 11,
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  borderRadius: 4,
-                  visibility: uiFontFamily !== DEFAULT_UI_FONT ? "visible" : "hidden",
-                }}
-              >
-                <RotateCcw size={11} />
-                {t("common.reset")}
-              </button>
-            </div>
-            <span style={{ fontSize: 11.5, color: "var(--text-hint)", lineHeight: 1.45 }}>
-              {t("theme.uiFontFamilyHint")}
-            </span>
-          </div>
-          <input
-            type="text"
-            value={uiFontFamily}
-            onChange={(e) => onUiFontFamilyChange(e.target.value)}
-            placeholder="e.g. 'Segoe UI', 'Helvetica Neue', sans-serif"
-            style={{
-              width: "100%",
-              height: 30,
-              padding: "0 8px",
-              borderRadius: 6,
-              border: "1px solid var(--border-medium)",
-              background: "var(--bg-card)",
-              color: "var(--text-secondary)",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              outline: "none",
-              boxSizing: "border-box",
-            }}
-          />
-        </div>
-      </div>
-
-      {/* Monospace Font Family */}
-      <div
-        style={{
-          padding: "16px 18px",
-          borderRadius: 8,
-          border: "1px solid var(--border-dim)",
-          background: "var(--bg-subtle)",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-                {t("theme.monoFontFamily")}
-              </span>
-              <button
-                onClick={() => onMonoFontFamilyChange(DEFAULT_MONO_FONT)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                  background: "none",
-                  border: "none",
-                  color: "var(--text-hint)",
-                  fontSize: 11,
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  borderRadius: 4,
-                  visibility: monoFontFamily !== DEFAULT_MONO_FONT ? "visible" : "hidden",
-                }}
-              >
-                <RotateCcw size={11} />
-                {t("common.reset")}
-              </button>
-            </div>
-            <span style={{ fontSize: 11.5, color: "var(--text-hint)", lineHeight: 1.45 }}>
-              {t("theme.monoFontFamilyHint")}
-            </span>
-          </div>
-          <input
-            type="text"
-            value={monoFontFamily}
-            onChange={(e) => onMonoFontFamilyChange(e.target.value)}
-            placeholder="e.g. 'JetBrains Mono', 'Fira Code', monospace"
-            style={{
-              width: "100%",
-              height: 30,
-              padding: "0 8px",
-              borderRadius: 6,
-              border: "1px solid var(--border-medium)",
-              background: "var(--bg-card)",
-              color: "var(--text-secondary)",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              outline: "none",
-              boxSizing: "border-box",
-            }}
-          />
         </div>
       </div>
     </div>
