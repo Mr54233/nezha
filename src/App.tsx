@@ -207,6 +207,12 @@ function App() {
   const tm = useTerminalManager();
   const pendingResumeStartsRef = useRef<Record<string, () => void>>({});
 
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+
+  const projectViewsRef = useRef(projectViews);
+  projectViewsRef.current = projectViews;
+
   const isWindowVisible = useRef(true);
   useEffect(() => {
     const handler = () => { isWindowVisible.current = document.visibilityState === "visible"; };
@@ -352,10 +358,11 @@ function App() {
         if (status === "done") scheduleForDoneTask(task_id);
 
         if (status === "done" || status === "failed" || status === "input_required") {
-          const task = tasks.find((t) => t.id === task_id);
+          const task = tasksRef.current.find((t) => t.id === task_id);
           if (!task) return;
-          const view = getProjectView(task.projectId);
-          const isSelected = view.selectedTaskId === task_id;
+          const view = projectViewsRef.current[task.projectId];
+          const selectedTaskId = view?.selectedTaskId ?? null;
+          const isSelected = selectedTaskId === task_id;
           const titleKey =
             status === "done" ? "taskNotif.done"
               : status === "failed" ? "taskNotif.failed"
