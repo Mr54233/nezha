@@ -392,6 +392,9 @@ const translations: Record<AppLanguage, Record<string, string>> = {
       "Failed to load project file list, @ references unavailable: {error}",
     "toast.saveProjectsFailed": "Failed to save project list: {error}",
     "toast.saveTasksFailed": "Failed to save tasks for project {projectId}: {error}",
+    "taskNotif.done": "Task completed",
+    "taskNotif.failed": "Task failed",
+    "taskNotif.inputRequired": "Task needs your input",
   },
   zh: {
     "appSettings.title": "应用设置",
@@ -761,6 +764,9 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     "toast.loadProjectFilesFailed": "加载项目文件列表失败，@ 引用不可用：{error}",
     "toast.saveProjectsFailed": "保存项目列表失败：{error}",
     "toast.saveTasksFailed": "保存任务失败（项目 {projectId}）：{error}",
+    "taskNotif.done": "任务完成",
+    "taskNotif.failed": "任务失败",
+    "taskNotif.inputRequired": "任务需要你的输入",
   },
 };
 

@@ -64,6 +64,7 @@ export interface Task {
   attentionRequestedAt?: number;
   starred?: boolean;
   failureReason?: string;
+  hasUnreadEvent?: boolean;
   codexSessionId?: string;
   codexSessionPath?: string;
   claudeSessionId?: string;

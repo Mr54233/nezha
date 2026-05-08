@@ -28,6 +28,7 @@ import type { FontFamily } from "./types";
 import { WelcomePage } from "./components/WelcomePage";
 import { ProjectPage } from "./components/ProjectPage";
 import { useToast } from "./components/Toast";
+import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { useTerminalManager } from "./hooks/useTerminalManager";
 import { useWorktreeDiffStats } from "./hooks/useWorktreeDiffStats";
 import { useI18n } from "./i18n";
@@ -155,6 +156,28 @@ function getInitialFontFamily(key: string, fallback: FontFamily): FontFamily {
   return stored || fallback;
 }
 
+async function sendDesktopNotification(
+  title: string,
+  body: string,
+  _projectId: string,
+  _taskId: string,
+  permissionRef: React.MutableRefObject<boolean>,
+) {
+  try {
+    let permitted = await isPermissionGranted();
+    if (!permitted && !permissionRef.current) {
+      permissionRef.current = true;
+      const permission = await requestPermission();
+      permitted = permission === "granted";
+    }
+    if (permitted) {
+      sendNotification({ title, body });
+    }
+  } catch {
+    // Notification not available (e.g. unsupported platform)
+  }
+}
+
 function App() {
   const { showToast } = useToast();
   const { t } = useI18n();
@@ -183,6 +206,15 @@ function App() {
 
   const tm = useTerminalManager();
   const pendingResumeStartsRef = useRef<Record<string, () => void>>({});
+
+  const isWindowVisible = useRef(true);
+  useEffect(() => {
+    const handler = () => { isWindowVisible.current = document.visibilityState === "visible"; };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
+  const notificationPermissionRequested = useRef(false);
 
   const formatSaveProjectsError = useCallback(
     (error: string) => t("toast.saveProjectsFailed", { error }),
@@ -318,6 +350,25 @@ function App() {
           tm.removeTaskBuffers([task_id]);
         }
         if (status === "done") scheduleForDoneTask(task_id);
+
+        if (status === "done" || status === "failed" || status === "input_required") {
+          const task = tasks.find((t) => t.id === task_id);
+          if (!task) return;
+          const view = getProjectView(task.projectId);
+          const isSelected = view.selectedTaskId === task_id;
+          const titleKey =
+            status === "done" ? "taskNotif.done"
+              : status === "failed" ? "taskNotif.failed"
+                : "taskNotif.inputRequired";
+          const title = t(titleKey);
+          const body = task.name ?? task.prompt.slice(0, 80);
+
+          if (!isWindowVisible.current) {
+            sendDesktopNotification(title, body, task.projectId, task_id, notificationPermissionRequested);
+          } else if (!isSelected) {
+            showToast(title + ": " + body, status === "done" ? "success" : status === "failed" ? "error" : "info");
+          }
+        }
       },
     );
     const p2 = listen<{ task_id: string; session_id: string; session_path: string }>(
@@ -889,7 +940,11 @@ function App() {
         }
 
         changed = true;
-        const updated: Task = { ...task, status, attentionRequestedAt };
+        const hasUnreadEvent =
+          status === "done" || status === "failed" || status === "input_required"
+            ? true
+            : undefined;
+        const updated: Task = { ...task, status, attentionRequestedAt, hasUnreadEvent };
         if (status === "failed" && failureReason) updated.failureReason = failureReason;
         return updated;
       });
@@ -978,9 +1033,18 @@ function App() {
               onNewTask={() =>
                 updateProjectView(project.id, { selectedTaskId: null, isNewTask: true })
               }
-              onSelectTask={(id) =>
-                updateProjectView(project.id, { selectedTaskId: id, isNewTask: false })
-              }
+              onSelectTask={(id) => {
+                updateProjectView(project.id, { selectedTaskId: id, isNewTask: false });
+                setTasks((prev) => {
+                  const task = prev.find((t) => t.id === id);
+                  if (!task?.hasUnreadEvent) return prev;
+                  const next = prev.map((t) =>
+                    t.id === id ? { ...t, hasUnreadEvent: undefined } : t,
+                  );
+                  persistProjectTasks(task.projectId, next, showToast, formatSaveTasksError);
+                  return next;
+                });
+              }}
               onDeleteTask={handleDeleteTask}
               onDeleteAllTasks={() => handleDeleteAllTasks(project)}
               onToggleTaskStar={handleToggleTaskStar}

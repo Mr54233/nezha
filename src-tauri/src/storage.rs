@@ -56,6 +56,8 @@ pub struct Task {
     pub additions: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletions: Option<i32>,
+    #[serde(rename = "hasUnreadEvent", skip_serializing_if = "Option::is_none")]
+    pub has_unread_event: Option<bool>,
 }
 
 // ── Path helpers ─────────────────────────────────────────────────────────────

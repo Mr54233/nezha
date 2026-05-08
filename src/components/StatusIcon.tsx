@@ -11,11 +11,19 @@ import type { TaskStatus } from "../types";
 
 export function StatusIcon({ status }: { status: TaskStatus }) {
   switch (status) {
+    case "pending":
+      return (
+        <Circle
+          size={14}
+          strokeWidth={2.5}
+          style={{ color: "var(--accent)", animation: "pulse 2s ease-in-out infinite" }}
+        />
+      );
     case "running":
       return (
         <Loader2
           size={14}
-          style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)" }}
+          style={{ animation: "spin 1s linear infinite", color: "var(--accent)" }}
         />
       );
     case "input_required":

@@ -30,6 +30,19 @@ function statusLabelKey(status: Task["status"]): string {
   }
 }
 
+function unreadBadgeColor(status: Task["status"]): string {
+  switch (status) {
+    case "done":
+      return "var(--success)";
+    case "input_required":
+      return "var(--accent)";
+    case "failed":
+      return "var(--danger)";
+    default:
+      return "var(--accent)";
+  }
+}
+
 export const TaskListItem = memo(
   function TaskListItem({
     task,
@@ -49,19 +62,40 @@ export const TaskListItem = memo(
     const { t } = useI18n();
     const [hov, setHov] = useState(false);
     const displayTitle = task.name ?? task.prompt;
+    const hasUnread = task.hasUnreadEvent === true;
     return (
       <div
         style={{
           ...s.taskCard,
           position: "relative",
-          background: selected ? "var(--bg-selected)" : hov ? "var(--bg-hover)" : "transparent",
+          background: selected
+            ? "var(--bg-selected)"
+            : hasUnread
+              ? "var(--accent-subtle)"
+              : hov
+                ? "var(--bg-hover)"
+                : "transparent",
+          transition: "background 0.12s",
         }}
         onMouseEnter={() => setHov(true)}
         onMouseLeave={() => setHov(false)}
         onClick={onClick}
       >
-        <div style={{ flexShrink: 0, marginTop: 1 }}>
+        <div style={{ position: "relative", flexShrink: 0, marginTop: 1 }}>
           <StatusIcon status={task.status} />
+          {hasUnread && (
+            <span
+              style={{
+                position: "absolute",
+                top: -2,
+                right: -2,
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                background: unreadBadgeColor(task.status),
+              }}
+            />
+          )}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={s.taskCardTitle}>
