@@ -21,6 +21,8 @@ function statusLabelKey(status: Task["status"]): string {
       return "status.detached";
     case "interrupted":
       return "status.interrupted";
+    case "idle":
+      return "status.idle";
     case "done":
       return "status.done";
     case "failed":
@@ -35,6 +37,8 @@ function unreadBadgeColor(status: Task["status"]): string {
     case "done":
       return "var(--success)";
     case "input_required":
+      return "var(--accent)";
+    case "idle":
       return "var(--accent)";
     case "failed":
       return "var(--danger)";

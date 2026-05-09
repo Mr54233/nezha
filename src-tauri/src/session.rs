@@ -576,7 +576,6 @@ fn process_claude_session_line(
 
     match value.get("type").and_then(serde_json::Value::as_str) {
         Some("assistant") => {
-            // stop_reason == "tool_use" 是 Claude 暂停等待用户批准或拒绝工具调用的明确信号
             let stop_reason = value
                 .get("message")
                 .and_then(|m| m.get("stop_reason"))
@@ -585,6 +584,8 @@ fn process_claude_session_line(
             if stop_reason == Some("tool_use") && !*waiting_for_user {
                 *waiting_for_user = true;
                 emit_active_task_status(app, task_id, "input_required");
+            } else if stop_reason == Some("end_turn") {
+                emit_active_task_status(app, task_id, "idle");
             }
         }
         Some("user") => {

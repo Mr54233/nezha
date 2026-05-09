@@ -83,12 +83,14 @@ export function TaskList({
     return tasks.filter((t) => t.prompt.toLowerCase().includes(q));
   }, [tasks, query]);
 
+  const isAttention = (s: Task["status"]) => s === "input_required" || s === "detached" || s === "interrupted" || s === "idle";
+
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
       const aNeedsAttention =
-        a.status === "input_required" || a.status === "detached" || a.status === "interrupted";
+        a.status === "input_required" || a.status === "detached" || a.status === "interrupted" || a.status === "idle";
       const bNeedsAttention =
-        b.status === "input_required" || b.status === "detached" || b.status === "interrupted";
+        b.status === "input_required" || b.status === "detached" || b.status === "interrupted" || b.status === "idle";
       if (aNeedsAttention && !bNeedsAttention) return -1;
       if (!aNeedsAttention && bNeedsAttention) return 1;
       if (aNeedsAttention && bNeedsAttention) {
@@ -120,7 +122,8 @@ export function TaskList({
       if (
         task.status === "input_required" ||
         task.status === "detached" ||
-        task.status === "interrupted"
+        task.status === "interrupted" ||
+        task.status === "idle"
       ) {
         attentionTasks.push(task);
       } else if (task.starred) {

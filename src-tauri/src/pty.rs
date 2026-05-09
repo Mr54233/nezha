@@ -511,6 +511,12 @@ pub async fn run_task(
         cmd.env(key, value);
     }
 
+    // Inject Claude Code hooks for task notification (idle/stop detection)
+    if !is_codex {
+        let _ = crate::hooks::ensure_hook_scripts(&project_path);
+        let _ = crate::hooks::inject_hooks_config(&project_path);
+    }
+
     let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
     let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
@@ -530,7 +536,7 @@ pub async fn run_task(
         project_path.clone(),
         is_codex,
         session_rx,
-        pre_session_id,
+        pre_session_id.clone(),
     );
     spawn_pty_reader(
         app.clone(),
@@ -544,6 +550,17 @@ pub async fn run_task(
         Some(session_tx),
         None,
     );
+
+    // Watch for hook events (agent idle/stop notifications)
+    if !is_codex {
+        crate::hooks::spawn_hooks_event_watcher(
+            app.clone(),
+            task_id.clone(),
+            project_path.clone(),
+            pre_session_id,
+        );
+    }
+
     spawn_exit_monitor(app, task_id, project_path, is_codex);
 
     Ok(())
@@ -725,12 +742,18 @@ pub async fn resume_task(
 
     let is_codex = agent == "codex";
 
+    // Inject hooks for resumed Claude Code tasks
+    if !is_codex {
+        let _ = crate::hooks::ensure_hook_scripts(&project_path);
+        let _ = crate::hooks::inject_hooks_config(&project_path);
+    }
+
     // resume 时 session_id 已知，直接查找文件并开始监视
     spawn_resume_session_watcher(
         app.clone(),
         task_id.clone(),
         project_path.clone(),
-        session_id,
+        session_id.clone(),
         is_codex,
     );
     spawn_pty_reader(
@@ -745,6 +768,17 @@ pub async fn resume_task(
         None,
         None,
     );
+
+    // Watch for hook events on resumed tasks
+    if !is_codex {
+        crate::hooks::spawn_hooks_event_watcher(
+            app.clone(),
+            task_id.clone(),
+            project_path.clone(),
+            Some(session_id),
+        );
+    }
+
     spawn_exit_monitor(app, task_id, project_path, is_codex);
 
     Ok(())

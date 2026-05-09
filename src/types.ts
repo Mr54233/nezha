@@ -48,6 +48,7 @@ export type TaskStatus =
   | "input_required"
   | "detached"
   | "interrupted"
+  | "idle"
   | "done"
   | "failed"
   | "cancelled";
@@ -105,6 +106,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   input_required: "Needs confirmation",
   detached: "Terminal disconnected",
   interrupted: "Interrupted",
+  idle: "Waiting for input",
   done: "Done",
   failed: "Failed",
   cancelled: "Cancelled",
@@ -115,7 +117,8 @@ export function isActiveTaskStatus(status: TaskStatus): boolean {
     status === "pending" ||
     status === "running" ||
     status === "input_required" ||
-    status === "detached"
+    status === "detached" ||
+    status === "idle"
   );
 }
 

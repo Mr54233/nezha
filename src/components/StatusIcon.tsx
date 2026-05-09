@@ -6,6 +6,7 @@ import {
   Loader2,
   AlertCircle,
   AlertTriangle,
+  Clock,
 } from "lucide-react";
 import type { TaskStatus } from "../types";
 
@@ -32,6 +33,8 @@ export function StatusIcon({ status }: { status: TaskStatus }) {
       return <AlertTriangle size={14} style={{ color: "var(--warning)" }} />;
     case "interrupted":
       return <AlertTriangle size={14} style={{ color: "var(--warning)" }} />;
+    case "idle":
+      return <Clock size={14} style={{ color: "var(--accent)" }} />;
     case "done":
       return <CheckCircle2 size={14} style={{ color: "var(--success)" }} />;
     case "failed":

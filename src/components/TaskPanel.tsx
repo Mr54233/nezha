@@ -77,7 +77,11 @@ export function TaskPanel({
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const hasAttention = tasks.some(
-    (t) => t.status === "input_required" || t.status === "detached" || t.status === "interrupted",
+    (t) =>
+      t.status === "input_required" ||
+      t.status === "detached" ||
+      t.status === "interrupted" ||
+      t.status === "idle",
   );
 
   if (collapsed) {

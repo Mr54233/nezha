@@ -11,6 +11,7 @@ mod app_settings;
 mod config;
 mod fs;
 mod git;
+mod hooks;
 mod notification;
 mod platform;
 mod pty;

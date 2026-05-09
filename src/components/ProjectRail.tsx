@@ -24,7 +24,11 @@ function getProjectStatus(tasks: Task[], projectId: string): ProjectStatus {
   const projectTasks = tasks.filter((t) => t.projectId === projectId);
   if (
     projectTasks.some(
-      (t) => t.status === "input_required" || t.status === "detached" || t.status === "interrupted",
+      (t) =>
+        t.status === "input_required" ||
+        t.status === "detached" ||
+        t.status === "interrupted" ||
+        t.status === "idle",
     )
   ) {
     return "attention";

@@ -127,6 +127,7 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     "status.inputRequired": "Needs confirmation",
     "status.detached": "Terminal disconnected",
     "status.interrupted": "Interrupted",
+    "status.idle": "Waiting for input",
     "status.done": "Done",
     "status.failed": "Failed",
     "status.cancelled": "Cancelled",
@@ -395,6 +396,7 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     "taskNotif.done": "Task completed",
     "taskNotif.failed": "Task failed",
     "taskNotif.inputRequired": "Task needs your input",
+    "taskNotif.idle": "Task is waiting for input",
   },
   zh: {
     "appSettings.title": "应用设置",
@@ -507,6 +509,7 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     "status.inputRequired": "需要确认",
     "status.detached": "终端连接断开",
     "status.interrupted": "异常中断",
+    "status.idle": "等待输入",
     "status.done": "已完成",
     "status.failed": "失败",
     "status.cancelled": "已取消",
@@ -767,6 +770,7 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     "taskNotif.done": "任务完成",
     "taskNotif.failed": "任务失败",
     "taskNotif.inputRequired": "任务需要你的输入",
+    "taskNotif.idle": "任务等待输入中",
   },
 };
 
