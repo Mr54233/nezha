@@ -28,7 +28,7 @@ import type { FontFamily } from "./types";
 import { WelcomePage } from "./components/WelcomePage";
 import { ProjectPage } from "./components/ProjectPage";
 import { useToast } from "./components/Toast";
-import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { sendNotification, isPermissionGranted, requestPermission, onAction } from "@tauri-apps/plugin-notification";
 import { useTerminalManager } from "./hooks/useTerminalManager";
 import { useWorktreeDiffStats } from "./hooks/useWorktreeDiffStats";
 import { useI18n } from "./i18n";
@@ -159,8 +159,8 @@ function getInitialFontFamily(key: string, fallback: FontFamily): FontFamily {
 async function sendDesktopNotification(
   title: string,
   body: string,
-  _projectId: string,
-  _taskId: string,
+  projectId: string,
+  taskId: string,
   permissionRef: React.MutableRefObject<boolean>,
 ) {
   try {
@@ -171,7 +171,7 @@ async function sendDesktopNotification(
       permitted = permission === "granted";
     }
     if (permitted) {
-      sendNotification({ title, body });
+      sendNotification({ title, body, extra: { projectId, taskId } });
     }
   } catch {
     // Notification not available (e.g. unsupported platform)
@@ -218,6 +218,36 @@ function App() {
     const handler = () => { isWindowActive.current = document.visibilityState === "visible"; };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
+  const navigateToTaskRef = useRef<(projectId: string, taskId: string) => void>(() => {});
+  navigateToTaskRef.current = (projectId: string, taskId: string) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    setActiveProject(project);
+    mountProject(project.id);
+    updateProjectView(project.id, { selectedTaskId: taskId, isNewTask: false });
+    setTasks((prev) => {
+      const task = prev.find((t) => t.id === taskId);
+      if (!task?.hasUnreadEvent) return prev;
+      const next = prev.map((t) =>
+        t.id === taskId ? { ...t, hasUnreadEvent: undefined } : t,
+      );
+      persistProjectTasks(task.projectId, next, showToast, formatSaveTasksError);
+      return next;
+    });
+  };
+
+  const pendingNotificationNav = useRef<{ projectId: string; taskId: string } | null>(null);
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) return;
+      const nav = pendingNotificationNav.current;
+      if (!nav) return;
+      pendingNotificationNav.current = null;
+      navigateToTaskRef.current(nav.projectId, nav.taskId);
+    });
+    return () => { unlisten.then((fn) => fn()); };
   }, []);
 
   const notificationPermissionRequested = useRef(false);
@@ -372,10 +402,11 @@ function App() {
           const body = task.name ?? task.prompt.slice(0, 80);
 
           if (!isWindowActive.current || !document.hasFocus()) {
+            pendingNotificationNav.current = { projectId: task.projectId, taskId: task_id };
             sendDesktopNotification(title, body, task.projectId, task_id, notificationPermissionRequested);
           } else if (status === "idle" || status === "input_required" || !isSelected) {
             const toastType = status === "done" ? "success" : status === "failed" ? "error" : "info";
-            showToast(title + ": " + body, toastType);
+            showToast(title + ": " + body, toastType, () => navigateToTaskRef.current(task.projectId, task_id));
           }
         }
       },
@@ -387,9 +418,20 @@ function App() {
         updateTaskSession(task_id, session_id, session_path);
       },
     );
+    // Production path: notification plugin routes click back to app with extra data
+    let p3: ReturnType<typeof onAction> extends Promise<infer T> ? T : never;
+    onAction(async (notification) => {
+      const extra = notification.extra as { projectId?: string; taskId?: string } | undefined;
+      if (extra?.projectId && extra?.taskId) {
+        pendingNotificationNav.current = null;
+        await getCurrentWindow().setFocus();
+        navigateToTaskRef.current(extra.projectId, extra.taskId);
+      }
+    }).then((listener) => { p3 = listener; });
     return () => {
       p1.then((fn) => fn());
       p2.then((fn) => fn());
+      p3?.unregister();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

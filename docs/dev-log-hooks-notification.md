@@ -86,8 +86,79 @@ if (!isWindowActive.current || !document.hasFocus()) {
 
 ## 后续 TODO
 
-- [ ] 桌面通知点击跳转到对应任务（`sendDesktopNotification` 的 projectId/taskId 参数已预留）
+- [ ] 桌面通知点击跳转到对应任务（见下方「通知点击跳转」章节）
 - [ ] Codex 支持（当前仅 Claude Code）
 - [ ] 清理 `.nezha/hooks/` 中的旧 `.sh`/`.cjs` 文件
 - [ ] Windows 兼容性长期验证（hooks 在不同 Claude Code 版本上的行为）
 - [ ] 通知开关（用户可能不想每个 idle 都弹通知）
+
+---
+
+# 通知点击跳转开发日志 (2026-05-12)
+
+## 目标
+
+让用户点击通知后直接跳转到对应任务，包括两条路径：
+1. **桌面通知**（系统通知）点击 → 切换到对应项目并选中任务
+2. **应用内 Toast** 点击 → 跳转到对应任务
+
+## 完成情况
+
+| 目标 | 状态 | 说明 |
+|------|------|------|
+| 应用内 Toast 点击跳转 | ✅ 已完成 | `showToast` 第三参数传 `onClick` 回调，点击后切换项目+选中任务+清未读 |
+| `navigateToTask` 抽取 | ✅ 已完成 | ref 包裹的跳转函数，每次渲染更新闭包，统一供 Toast / 桌面通知共用 |
+| 桌面通知点击跳转 | ❌ 未完成 | Windows 上通知回退到 PowerShell，点击无法激活 Tauri 窗口（见下方） |
+
+## 已完成的改动
+
+### `src/App.tsx`
+
+1. **`navigateToTaskRef`** — ref 包裹的跳转函数，内容为：查找项目 → `setActiveProject` → `mountProject` → `updateProjectView`（选中任务）→ 清 `hasUnreadEvent`。每次渲染更新闭包以保证 state 是最新的。
+
+2. **`pendingNotificationNav`** — 发送桌面通知前存储 `{ projectId, taskId }`，用于窗口获焦时的兜底导航。
+
+3. **`onFocusChanged` 监听** — 通过 `getCurrentWindow().onFocusChanged` 监听 Tauri 窗口焦点变化。窗口获焦时检查 `pendingNotificationNav`，有值则自动跳转到对应任务（dev 模式兜底路径）。
+
+4. **`onAction` 监听（生产模式）** — `@tauri-apps/plugin-notification` 的 `onAction` 回调，读取 `sendNotification` 传入的 `extra: { projectId, taskId }`，调用 `getCurrentWindow().setFocus()` + 跳转。预期在生产构建中生效。
+
+5. **`sendDesktopNotification` 参数恢复** — 函数签名恢复 `(title, body, projectId, taskId, permissionRef)`，`sendNotification` 调用加 `extra: { projectId, taskId }` 供 `onAction` 读取。
+
+6. **Toast onClick** — `showToast` 调用补传第三参数 `() => navigateToTaskRef.current(task.projectId, task_id)`。
+
+### `src-tauri/tauri.conf.json`
+
+- 打包目标从 `"all"` 改为 `["nsis"]`（WiX 下载超时，改用 NSIS 打包器）。
+
+## 桌面通知点击跳转 — 未完成原因
+
+### 根因
+
+Windows 上 `tauri-plugin-notification` 使用 WinRT Toast Notification API。该 API 要求：
+
+1. **AUMID（Application User Model ID）** 必须正确设置在进程上
+2. **开始菜单快捷方式** 必须存在，且快捷方式的 AUMID 属性与进程 AUMID 一致
+
+只有两个条件同时满足，Windows 才能将通知与正确的应用关联，点击通知时才能激活对应窗口并传递点击事件。
+
+### 实际表现
+
+- **dev 模式**（`pnpm tauri dev`）：通知来源显示 "PowerShell"，点击后无反应（既不激活窗口，也不触发 `onAction`）
+- **release exe 直接运行**（未安装）：同上，通知仍回退到 PowerShell AUMID
+- **NSIS 安装版**：已构建安装包并安装测试，但通知来源仍显示 "PowerShell"，点击仍无反应
+
+### 已尝试的方案
+
+| 方案 | 结果 |
+|------|------|
+| `onAction` + `extra` 数据 | `onAction` 回调未触发，通知与 Tauri 应用未关联 |
+| `window.addEventListener("focus")` + pending 导航 | 窗口未被激活，focus 事件不触发 |
+| `getCurrentWindow().onFocusChanged` + pending 导航 | 同上，Tauri 窗口焦点未变化 |
+| NSIS 安装后测试 | 安装后通知仍显示 PowerShell，AUMID 可能未正确注册到快捷方式 |
+
+### 可能的后续方向
+
+1. **Rust 侧设置进程 AUMID** — 在 `setup` 中调用 `SetCurrentProcessExplicitAppUserModelID("com.hanshutx.nezha")`，强制设置进程级 AUMID
+2. **安装时注册快捷方式 AUMID** — 通过 NSIS 自定义脚本在安装时创建带 AUMID 属性的快捷方式
+3. **放弃 WinRT Toast** — 改用 `notify-rust` 或自定义通知机制（如系统托盘气泡通知），绕开 AUMID 限制
+4. **窗口获焦兜底** — 目前 `onFocusChanged` 代码已就绪，当用户手动切回应用时会自动跳转到通知对应的任务。需要用户实际测试此路径是否工作
