@@ -397,6 +397,8 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     "taskNotif.failed": "Task failed",
     "taskNotif.inputRequired": "Task needs your input",
     "taskNotif.idle": "Task is waiting for input",
+    "taskNotif.detached": "Task terminal disconnected",
+    "taskNotif.interrupted": "Task was interrupted",
   },
   zh: {
     "appSettings.title": "应用设置",
@@ -771,6 +773,8 @@ const translations: Record<AppLanguage, Record<string, string>> = {
     "taskNotif.failed": "任务失败",
     "taskNotif.inputRequired": "任务需要你的输入",
     "taskNotif.idle": "任务等待输入中",
+    "taskNotif.detached": "任务终端断开连接",
+    "taskNotif.interrupted": "任务被中断",
   },
 };
 

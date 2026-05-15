@@ -37,9 +37,11 @@ function unreadBadgeColor(status: Task["status"]): string {
     case "done":
       return "var(--success)";
     case "input_required":
-      return "var(--accent)";
     case "idle":
       return "var(--accent)";
+    case "detached":
+    case "interrupted":
+      return "var(--warning)";
     case "failed":
       return "var(--danger)";
     default:

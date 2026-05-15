@@ -130,6 +130,14 @@ function isLiveTerminalTaskStatus(status: TaskStatus): boolean {
   return status === "pending" || status === "running" || status === "input_required";
 }
 
+function isAttentionStatus(status: TaskStatus): boolean {
+  return status === "input_required" || status === "idle" || status === "detached" || status === "interrupted";
+}
+
+function shouldNotifyStatus(status: TaskStatus): boolean {
+  return status === "done" || status === "failed";
+}
+
 function getSystemPrefersDark() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -387,25 +395,22 @@ function App() {
         }
         if (status === "done") scheduleForDoneTask(task_id);
 
-        if (status === "done" || status === "failed" || status === "input_required" || status === "idle") {
+        if (shouldNotifyStatus(status)) {
           const task = tasksRef.current.find((t) => t.id === task_id);
           if (!task) return;
-          const view = projectViewsRef.current[task.projectId];
-          const selectedTaskId = view?.selectedTaskId ?? null;
-          const isSelected = selectedTaskId === task_id;
           const titleKey =
             status === "done" ? "taskNotif.done"
-              : status === "failed" ? "taskNotif.failed"
-                : status === "idle" ? "taskNotif.idle"
-                  : "taskNotif.inputRequired";
+              : "taskNotif.failed";
           const title = t(titleKey);
           const body = task.name ?? task.prompt.slice(0, 80);
+          const view = projectViewsRef.current[task.projectId];
+          const isSelected = view?.selectedTaskId === task_id;
 
           if (!isWindowActive.current || !document.hasFocus()) {
             pendingNotificationNav.current = { projectId: task.projectId, taskId: task_id };
             sendDesktopNotification(title, body, task.projectId, task_id, notificationPermissionRequested);
-          } else if (status === "idle" || status === "input_required" || !isSelected) {
-            const toastType = status === "done" ? "success" : status === "failed" ? "error" : "info";
+          } else if (!isSelected) {
+            const toastType = status === "done" ? "success" : "error";
             showToast(title + ": " + body, toastType, () => navigateToTaskRef.current(task.projectId, task_id));
           }
         }
@@ -983,20 +988,18 @@ function App() {
         if (task.id !== taskId) return task;
         if (shouldIgnoreTaskStatusTransition(task.status, status)) return task;
 
-        const attentionRequestedAt =
-          status === "input_required" || status === "idle"
-            ? (extra?.attentionRequestedAt ?? Date.now())
-            : undefined;
+        const attentionRequestedAt = isAttentionStatus(status)
+          ? (extra?.attentionRequestedAt ?? Date.now())
+          : undefined;
 
         if (task.status === status && task.attentionRequestedAt === attentionRequestedAt) {
           return task;
         }
 
         changed = true;
-        const hasUnreadEvent =
-          status === "done" || status === "failed" || status === "input_required" || status === "idle"
-            ? true
-            : undefined;
+        const hasUnreadEvent = isAttentionStatus(status) || status === "done" || status === "failed"
+          ? true
+          : undefined;
         const updated: Task = { ...task, status, attentionRequestedAt, hasUnreadEvent };
         if (status === "failed" && failureReason) updated.failureReason = failureReason;
         return updated;
