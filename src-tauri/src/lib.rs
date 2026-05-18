@@ -4,6 +4,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use usage::CodexRpcClient;
+use user_notify::{get_notification_manager, NotificationBuilder, NotificationManager, NotificationResponseAction};
 
 mod agent_assist;
 mod analytics;
@@ -49,66 +50,38 @@ impl TaskManager {
     }
 }
 
+pub struct NotificationState {
+    manager: Arc<dyn NotificationManager>,
+}
+
 #[tauri::command]
-fn send_native_notification(
-    app: tauri::AppHandle,
+async fn send_native_notification(
+    state: tauri::State<'_, NotificationState>,
     title: String,
     body: String,
     project_id: String,
     task_id: String,
 ) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use tauri::Emitter;
-        use tauri::Manager;
-        use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
-        use windows::Data::Xml::Dom::XmlDocument;
-        use windows::core::HSTRING;
+    let builder = NotificationBuilder::new()
+        .title(&title)
+        .body(&body)
+        .set_user_info(HashMap::from([
+            ("projectId".into(), project_id),
+            ("taskId".into(), task_id),
+        ]));
 
-        let launch_arg = format!("{}:{}", project_id, task_id);
-        let xml_str = format!(
-            r#"<toast activationType="foreground" launch="{}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
-            launch_arg, title, body
-        );
-
-        let xml_doc = XmlDocument::new().map_err(|e| e.to_string())?;
-        xml_doc.LoadXml(&HSTRING::from(&xml_str)).map_err(|e| e.to_string())?;
-
-        let toast = ToastNotification::CreateToastNotification(&xml_doc).map_err(|e| e.to_string())?;
-
-        let app_clone = app.clone();
-        toast.Activated(
-            &windows::Foundation::TypedEventHandler::<ToastNotification, windows::core::IInspectable>::new(
-                move |_sender, _args| {
-                    let _ = app_clone.emit("notification-clicked", ());
-                    if let Some(window) = app_clone.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
-                    }
-                    Ok(())
-                }
-            )
-        ).map_err(|e| e.to_string())?;
-
-        let notifier = ToastNotificationManager::CreateToastNotifierWithId(
-            &HSTRING::from("com.hanshutx.nezha")
-        ).map_err(|e| e.to_string())?;
-
-        notifier.Show(&toast).map_err(|e| e.to_string())?;
-        std::mem::forget(toast);
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (title, body, project_id, task_id);
-        return Err("native notifications not available on this platform".into());
-    }
+    state
+        .manager
+        .send_notification(builder)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|_app| {
+        .setup(|app| {
             // 后台预热 login shell 环境，避免第一次启动任务时阻塞
             std::thread::spawn(|| {
                 crate::app_settings::get_login_shell_path();
@@ -126,6 +99,33 @@ pub fn run() {
                     ).ok().unwrap_or_default();
                 }
             }
+
+            let notif_manager =
+                get_notification_manager("com.hanshutx.nezha".into(), None);
+            {
+                use tauri::Emitter;
+                use tauri::Manager;
+                let app_handle = app.handle().clone();
+                let mgr = notif_manager.clone();
+                mgr.register(
+                    Box::new(move |response| {
+                        if matches!(response.action, NotificationResponseAction::Default) {
+                            let _ =
+                                app_handle.emit("notification-clicked", response.user_info.clone());
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }),
+                    vec![],
+                )
+                .ok();
+                app.manage(NotificationState {
+                    manager: notif_manager,
+                });
+            }
+
             Ok(())
         })
         .manage(TaskManager {
@@ -141,7 +141,6 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             send_native_notification,
             pty::run_task,

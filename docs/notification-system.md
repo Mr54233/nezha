@@ -36,13 +36,10 @@ Nezha 后端 (hooks.rs — notify crate 文件监听)
   ├─ shouldNotifyStatus(done/failed/idle) → 决定是否弹通知
   │
   ├─ 窗口不可见 或 失焦 + system 开关
-  │   └─ sendDesktopNotification() — 三级回退策略：
-  │       ├─ 1. invoke("send_native_notification") — WinRT Toast (仅 Windows)
+  │   └─ sendDesktopNotification() — 两级策略：
+  │       ├─ 1. invoke("send_native_notification") — user-notify crate (全平台)
   │       │     → 点击通过 "notification-clicked" Tauri 事件处理
-  │       ├─ 2. sendNotification() — tauri-plugin-notification (macOS/Linux)
-  │       │     → 点击通过 onAction() 回调处理
-  │       └─ 3. window.Notification — Web API 最终兜底
-  │           → 点击通过 onclick 回调处理
+  │       └─ 2. window.Notification — Web API 兜底
   │
   ├─ 窗口可见 + 获焦 + !isSelected + inApp 开关
   │   └─ showToast(body, type, onClick)
@@ -109,27 +106,58 @@ Nezha 后端 (hooks.rs — notify crate 文件监听)
 
 ### 3.3 原生通知 (`src-tauri/src/lib.rs`)
 
+使用 `user-notify` crate（v0.4）统一全平台桌面通知 API。
+
+#### 依赖
+
+```toml
+user-notify = "0.4"
+```
+
+内部实现：
+- Windows：WinRT Toast（`windows` crate）
+- macOS：`objc2-user-notifications`
+- Linux：`notify-rust`（XDG Desktop Notification）
+
+#### 初始化（`setup` 阶段）
+
+```rust
+let notif_manager = get_notification_manager("com.hanshutx.nezha".into(), None);
+let app_handle = app.handle().clone();
+notif_manager.register(
+    Box::new(move |response| {
+        if matches!(response.action, NotificationResponseAction::Default) {
+            app_handle.emit("notification-clicked", response.user_info.clone());
+            // 恢复窗口
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }
+    }),
+    vec![],
+).ok();
+app.manage(NotificationState { manager: notif_manager });
+```
+
+- `get_notification_manager()` 根据平台返回对应的实现（失败时返回空 mock）
+- `register()` 设置点击回调，点击时 emit `notification-clicked` 事件携带 `user_info`（含 `projectId`、`taskId`）
+- `NotificationState` 通过 `app.manage()` 注入 Tauri 状态
+
 #### `send_native_notification` 命令
 
 ```rust
 #[tauri::command]
-fn send_native_notification(app, title, body, project_id, task_id) -> Result<(), String>
+async fn send_native_notification(
+    state: tauri::State<'_, NotificationState>,
+    title: String, body: String,
+    project_id: String, task_id: String,
+) -> Result<(), String>
 ```
 
-**Windows 实现** (`#[cfg(target_os = "windows")]`)：
+通过 `NotificationBuilder` 构造通知，`user_info` 嵌入 `projectId` 和 `taskId`，点击时原样返回给回调。
 
-1. 构造 WinRT Toast XML（标题 + 正文 + launch 参数 `projectId:taskId`）
-2. 创建 `ToastNotification`
-3. 注册 `Activated` 回调：
-   - emit `"notification-clicked"` Tauri 事件
-   - `window.unminimize()` — 从最小化恢复
-   - `window.set_focus()` — 聚焦窗口
-4. 通过 `CreateToastNotifierWithId("com.hanshutx.nezha")` 指定 AUMID 发送
-5. `std::mem::forget(toast)` — 防止 Toast 对象被 drop 后回调失效
-
-**非 Windows 平台** (`#[cfg(not(target_os = "windows"))`)：返回 `Err(...)`，触发前端回退到 `tauri-plugin-notification` 路径。
-
-#### AUMID 设置 (`setup` 阶段)
+#### AUMID 设置（Windows）
 
 ```rust
 #[cfg(target_os = "windows")]
@@ -175,71 +203,45 @@ task-status 事件到达
   ├─ 去重：同一任务同一状态 5 秒内不重复
   │
   ├─ 窗口不可见 或 失焦 + system 开关
-  │   ├─ 存储 pendingNotificationNav
-  │   └─ sendDesktopNotification(title, body, projectId, taskId, ...)
+  │   └─ sendDesktopNotification(title, body, projectId, taskId)
   │
   └─ 窗口可见 + 获焦 + !isSelected + inApp 开关
       └─ showToast(body, toastType, onClick)
 ```
 
-### 4.3 `sendDesktopNotification()` — 三级回退策略
+### 4.3 `sendDesktopNotification()` — 两级策略
 
 ```typescript
-async function sendDesktopNotification(title, body, projectId, taskId, permissionRef, _onClick) {
-  // 第一级：WinRT 原生通知（仅 Windows，点击通过 notification-clicked 事件处理）
+async function sendDesktopNotification(title, body, projectId, taskId) {
   try {
     await invoke("send_native_notification", { title, body, projectId, taskId });
-    return; // Windows 路径成功，直接返回
-  } catch {}
-
-  // 第二级：tauri-plugin-notification（macOS/Linux，点击通过 onAction 处理）
-  try {
-    let permitted = await isPermissionGranted();
-    if (!permitted && !permissionRef.current) {
-      permissionRef.current = true;
-      const permission = await requestPermission();
-      permitted = permission === "granted";
-    }
-    if (permitted) {
-      sendNotification({ title, body, extra: { projectId, taskId } });
-      return;
-    }
-  } catch {}
-
-  // 第三级：Web Notification API（最终兜底，点击通过 onclick 处理）
-  const n = new window.Notification(title, { body });
-  n.onclick = () => { n.close(); _onClick(); };
+  } catch {
+    // Web Notification API 兜底
+    const n = new window.Notification(title, { body });
+    n.onclick = () => { n.close(); getCurrentWindow().setFocus(); };
+  }
 }
 ```
 
+- 第一级：`user-notify` 统一全平台（Windows/macOS/Linux）
+- 第二级：Web Notification API 兜底（仅当 Rust 命令失败时触发）
+
 ### 4.4 点击跳转
 
-前端注册了两个通知点击监听器，根据发送路径只有一个会触发：
+#### user-notify 路径（全平台）
 
-#### WinRT 路径（Windows）
+1. `user-notify` 检测到用户点击通知
+2. Rust 回调：emit `"notification-clicked"` 携带 `{ projectId, taskId }` + 恢复窗口
+3. 前端 `listen("notification-clicked")` → 直接用 payload 导航
 
-1. WinRT `Activated` 回调触发（Rust 侧）
-2. Rust emit `"notification-clicked"` + `unminimize()` + `set_focus()`
-3. 前端 `listen("notification-clicked")` → 读取 `pendingNotificationNav.current` → `navigateToTask()`
-
-#### 插件路径（macOS/Linux）
-
-1. `tauri-plugin-notification` 的 `onAction()` 回调触发
-2. 从 `notification.extra` 提取 `{ projectId, taskId }`
-3. `setFocus()` + `navigateToTask()`
-
-> **注意**：`onAction()` 在 Windows 上不工作（GitHub #2150，2022 年开至今未解决），所以 Windows 必须走 WinRT 路径。
-
-#### Web API 兜底路径
-
-1. `window.Notification` 的 `onclick` 触发
-2. 直接执行 `_onClick()` 回调
-
-#### 窗口获焦兜底
-
-- `pendingNotificationNav` ref 存储 `{ projectId, taskId }`
-- 监听 `window.focus` 事件 + `getCurrentWindow().onFocusChanged`
-- 窗口获焦时检查 ref，有值则自动跳转（用户手动切回应用也能跳转）
+```typescript
+listen<{ projectId: string; taskId: string }>("notification-clicked", (event) => {
+  const { projectId, taskId } = event.payload;
+  if (projectId && taskId) {
+    navigateToTaskRef.current(projectId, taskId);
+  }
+});
+```
 
 #### Toast 点击
 
@@ -366,34 +368,21 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
 
 ## 七、跨平台架构
 
-### 桌面通知发送 — 三级回退
+### 桌面通知发送 — user-notify 统一
 
 ```
 sendDesktopNotification()
   │
-  ├─ 1. send_native_notification (Rust → WinRT Toast)
-  │     ✅ Windows: 发送 + 点击跳转 + 最小化恢复
-  │     ❌ macOS/Linux: 返回 Err，触发下一级
+  ├─ 1. send_native_notification (Rust → user-notify crate)
+  │     ✅ Windows: WinRT Toast
+  │     ✅ macOS:   objc2-user-notifications
+  │     ✅ Linux:   notify-rust (XDG)
+  │     → 点击回调统一通过 "notification-clicked" Tauri 事件处理
   │
-  ├─ 2. sendNotification() (tauri-plugin-notification)
-  │     ✅ macOS/Linux: 发送（待验证 onAction 点击回调）
-  │     ⚠️ Windows: 发送成功但 onAction 不工作（GitHub #2150）
-  │     → 因 Windows 走第 1 级，此问题不影响
-  │
-  └─ 3. window.Notification (Web API)
+  └─ 2. window.Notification (Web API，仅兜底)
         ✅ 全平台: 发送 + onclick 回调
         ❌ 无最小化恢复，来源显示为 webview
 ```
-
-### 桌面通知点击 — 双通道监听
-
-| 监听器 | 触发条件 | 平台 |
-|--------|---------|------|
-| `listen("notification-clicked")` | WinRT Toast `Activated` 回调 | Windows |
-| `onAction()` | tauri-plugin-notification 点击回调 | macOS/Linux（Windows 不触发） |
-| `window.Notification.onclick` | Web API 通知点击 | 全平台兜底 |
-
-两个监听器同时注册，根据发送路径只有一个会触发，不会冲突。
 
 ### 跨平台状态总结
 
@@ -404,22 +393,9 @@ sendDesktopNotification()
 | idle 状态 + attention badge | DONE | DONE | DONE |
 | 应用内 Toast | DONE | DONE | DONE |
 | 通知设置面板 | DONE | DONE | DONE |
-| 桌面通知发送 | DONE (WinRT Toast) | DONE (plugin) | DONE (plugin) |
-| 通知点击跳转 | DONE (Activated 回调) | LIKELY (onAction，待测试) | LIKELY (onAction，待测试) |
-| 最小化恢复 | DONE (`unminimize()`) | NEEDS TEST | NEEDS TEST |
-| AUMID / 通知来源 | DONE | N/A | N/A |
-
-### macOS/Linux 待验证项
-
-1. **`onAction()` 是否工作** — 插件文档声称支持，但未在 macOS/Linux 实测
-2. **通知来源显示** — 插件在 macOS/Linux 上的通知来源标识
-3. **最小化恢复** — 插件点击回调是否能在窗口最小化时恢复
-4. **权限请求流程** — macOS 可能需要额外权限配置
-
-### 上游已知问题
-
-- **GitHub #2150**：`tauri-plugin-notification` 的 `onAction()` 在 Windows 上不工作（2022 年 3 月开，状态 "Proposal"），这是 Windows 使用 WinRT Toast 的直接原因
-- **GitHub #4770**、**#4779**：同类问题报告
+| 桌面通知发送 | DONE | DONE | DONE |
+| 通知点击跳转 | DONE | DONE | DONE |
+| 最小化恢复 | DONE | DONE | DONE |
 
 ---
 
@@ -428,10 +404,8 @@ sendDesktopNotification()
 | 限制 | 影响范围 | 说明 |
 |------|---------|------|
 | dev 模式通知来源显示 PowerShell | Windows dev | 安装版正常，Windows 平台限制 |
-| `std::mem::forget(toast)` 内存泄漏 | Windows | 每次通知泄漏一个 COM 对象，量极小可接受 |
-| macOS/Linux onAction 未实测 | macOS/Linux | 理论上应工作，需实际验证 |
 | Codex 不支持 hooks | 全平台 | hooks 仅适用于 Claude Code |
-| 非安装版 macOS/Linux 通知可能不显示 | macOS/Linux | 未安装时 AUMID 关联缺失 |
+| `user-notify` LGPL-3.0 许可证 | 全平台 | 静态链接需注意合规，或作为动态库加载 |
 
 ---
 
@@ -440,12 +414,12 @@ sendDesktopNotification()
 | 文件 | 说明 |
 |------|------|
 | `src-tauri/src/hooks.rs` | Hook 脚本生成、配置注入、事件文件监听 |
-| `src-tauri/src/lib.rs` | WinRT 原生通知、AUMID、`send_native_notification` |
+| `src-tauri/src/lib.rs` | user-notify 初始化、send_native_notification、AUMID |
 | `src-tauri/src/pty.rs` | run_task/resume_task 中注入 hooks + 启动监听 |
 | `src-tauri/src/session.rs` | end_turn 兜底检测 |
-| `src-tauri/Cargo.toml` | notify、windows、tauri-plugin-notification crate |
-| `src-tauri/capabilities/default.json` | 通知相关权限 |
-| `src/App.tsx` | 通知分发、三级回退、双通道点击、去重、设置、跳转 |
+| `src-tauri/Cargo.toml` | user-notify、windows、notify crate |
+| `src-tauri/capabilities/default.json` | 权限配置 |
+| `src/App.tsx` | 通知分发、点击跳转、去重、设置 |
 | `src/App.css` | Toast 方向性动画 |
 | `src/components/Toast.tsx` | 实色背景、方向动画、位置读取 |
 | `src/components/app-settings/NotificationPanel.tsx` | 通知设置面板 |

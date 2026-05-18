@@ -7,8 +7,6 @@
     "core:default",
     "core:window:allow-set-theme",
     "opener:default",
-    "dialog:default",
-    "notification:default",
-    "notification:allow-register-action-types"
+    "dialog:default"
   ]
 }
