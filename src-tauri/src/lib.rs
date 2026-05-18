@@ -82,6 +82,7 @@ fn send_native_notification(
                 move |_sender, _args| {
                     let _ = app_clone.emit("notification-clicked", ());
                     if let Some(window) = app_clone.get_webview_window("main") {
+                        let _ = window.unminimize();
                         let _ = window.set_focus();
                     }
                     Ok(())
