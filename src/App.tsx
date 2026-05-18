@@ -221,6 +221,7 @@ function App() {
   const handleNotificationSettingsChange = useCallback((settings: NotificationSettings) => {
     setNotificationSettings(settings);
     localStorage.setItem("nezha:notificationSettings", JSON.stringify(settings));
+    window.dispatchEvent(new CustomEvent("toast-position-changed"));
   }, []);
   const notifSettingsRef = useRef(notificationSettings);
   notifSettingsRef.current = notificationSettings;
@@ -454,7 +455,7 @@ function App() {
             });
           } else if (!isSelected && ns.inApp) {
             const toastType = status === "done" ? "success" : status === "failed" ? "error" : "info";
-            showToast(title + ": " + body, toastType, () => navigateToTaskRef.current(task.projectId, task_id));
+            showToast(body, toastType, () => navigateToTaskRef.current(task.projectId, task_id));
           }
         }
       },

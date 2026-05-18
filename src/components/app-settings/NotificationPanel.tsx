@@ -1,7 +1,7 @@
 import type React from "react";
 import { useI18n } from "../../i18n";
 import s from "../../styles";
-import type { NotificationSettings } from "../../types";
+import type { NotificationSettings, ToastPosition } from "../../types";
 
 interface NotificationPanelProps {
   settings: NotificationSettings;
@@ -198,6 +198,59 @@ export function NotificationPanel({ settings, onChange }: NotificationPanelProps
         disabled={disabled}
         onChange={() => update({ system: !settings.system })}
       />
+
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 14,
+        padding: "14px 18px",
+        borderRadius: 12,
+        border: "1px solid var(--border-dim)",
+        background: "var(--bg-subtle)",
+        opacity: disabled ? 0.45 : 1,
+        transition: "opacity 0.15s",
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={labelStyle}>{t("notif.toastPosition")}</div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["top-left", "top-right", "bottom-left", "bottom-right"] as ToastPosition[]).map((pos) => {
+            const active = settings.toastPosition === pos;
+            return (
+              <button
+                key={pos}
+                disabled={disabled}
+                onClick={() => update({ toastPosition: pos })}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  border: active ? "1.5px solid var(--accent)" : "1.5px solid var(--border-medium)",
+                  background: active ? "var(--accent-subtle)" : "transparent",
+                  cursor: disabled ? "default" : "pointer",
+                  position: "relative",
+                  transition: "background 0.12s, border 0.12s",
+                }}
+              >
+                <div style={{
+                  position: "absolute",
+                  width: 8,
+                  height: 8,
+                  borderRadius: 2,
+                  background: active ? "var(--accent)" : "var(--text-hint)",
+                  opacity: active ? 1 : 0.35,
+                  transition: "background 0.12s, opacity 0.12s",
+                  ...(pos === "top-left" ? { top: 4, left: 4 } :
+                    pos === "top-right" ? { top: 4, right: 4 } :
+                    pos === "bottom-left" ? { bottom: 4, left: 4 } :
+                    { bottom: 4, right: 4 }),
+                }} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <div style={{
         fontSize: 11.5,

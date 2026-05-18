@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
 import { CheckCircle2, AlertCircle, AlertTriangle, Info } from "lucide-react";
 import type React from "react";
+import type { ToastPosition } from "../types";
+import { DEFAULT_NOTIFICATION_SETTINGS } from "../types";
 
 type ToastType = "error" | "warning" | "success" | "info";
 
@@ -27,13 +29,26 @@ export type { ToastType };
 function toastAccentColor(type: ToastType): string {
   switch (type) {
     case "error":
-      return "var(--danger)";
+      return "var(--toast-error-fg)";
     case "warning":
-      return "var(--warning)";
+      return "var(--toast-warning-fg)";
     case "success":
-      return "var(--success)";
+      return "var(--toast-success-fg)";
     case "info":
-      return "var(--accent)";
+      return "var(--toast-info-fg)";
+  }
+}
+
+function toastBgColor(type: ToastType): string {
+  switch (type) {
+    case "error":
+      return "var(--toast-error-bg)";
+    case "warning":
+      return "var(--toast-warning-bg)";
+    case "success":
+      return "var(--toast-success-bg)";
+    case "info":
+      return "var(--toast-info-bg)";
   }
 }
 
@@ -52,11 +67,35 @@ function ToastIcon({ type }: { type: ToastType }) {
   }
 }
 
+function getToastPosition(): ToastPosition {
+  try {
+    const raw = localStorage.getItem("nezha:notificationSettings");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.toastPosition) return parsed.toastPosition;
+    }
+  } catch {}
+  return DEFAULT_NOTIFICATION_SETTINGS.toastPosition;
+}
+
+function positionAnimation(position: ToastPosition, exiting: boolean): string {
+  const dir = position.includes("right") ? "right" : "left";
+  const suffix = exiting ? "out" : "in";
+  return `toast-${dir}-${suffix} 0.25s ease forwards`;
+}
+
 const DURATION = 4500;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timerMap = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [position, setPosition] = useState<ToastPosition>(getToastPosition);
+
+  useEffect(() => {
+    const handler = () => setPosition(getToastPosition());
+    window.addEventListener("toast-position-changed", handler);
+    return () => window.removeEventListener("toast-position-changed", handler);
+  }, []);
 
   const dismiss = useCallback((id: string) => {
     const timer = timerMap.current.get(id);
@@ -89,7 +128,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <ToastContainer toasts={toasts} onDismiss={dismiss} />
+      <ToastContainer toasts={toasts} onDismiss={dismiss} position={position} />
     </ToastContext.Provider>
   );
 }
@@ -97,23 +136,31 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 function ToastContainer({
   toasts,
   onDismiss,
+  position,
 }: {
   toasts: ToastItem[];
   onDismiss: (id: string) => void;
+  position: ToastPosition;
 }) {
   if (toasts.length === 0) return null;
+
+  const isTop = position.startsWith("top");
+  const containerStyle: React.CSSProperties = {
+    position: "fixed",
+    zIndex: 9999,
+    display: "flex",
+    flexDirection: isTop ? "column" : "column-reverse",
+    gap: 10,
+    width: 360,
+    pointerEvents: "none",
+    ...(position === "bottom-right" ? { bottom: 20, right: 20 } :
+      position === "bottom-left" ? { bottom: 20, left: 20 } :
+      position === "top-right" ? { top: 20, right: 20 } :
+      { top: 20, left: 20 }),
+  };
+
   return (
-    <div style={{
-      position: "fixed",
-      bottom: 20,
-      right: 20,
-      zIndex: 9999,
-      display: "flex",
-      flexDirection: "column",
-      gap: 10,
-      width: 360,
-      pointerEvents: "none",
-    }}>
+    <div style={containerStyle}>
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -128,13 +175,10 @@ function ToastContainer({
             gap: 12,
             padding: "12px 14px",
             borderRadius: "var(--radius-lg)",
-            background: "var(--bg-card)",
-            border: "1px solid var(--border-medium)",
-            borderLeft: `3px solid ${toastAccentColor(t.type)}`,
+            background: toastBgColor(t.type),
+            border: `1px solid ${toastAccentColor(t.type)}22`,
             boxShadow: "var(--shadow-md)",
-            animation: t.exiting
-              ? "toast-out 0.2s ease forwards"
-              : "toast-in 0.25s ease forwards",
+            animation: positionAnimation(position, !!t.exiting),
             transition: "box-shadow 0.15s ease, transform 0.15s ease",
             cursor: t.onClick ? "pointer" : "default",
             position: "relative",
@@ -157,7 +201,7 @@ function ToastContainer({
             fontSize: 12.5,
             fontWeight: 500,
             lineHeight: 1.5,
-            color: "var(--text-primary)",
+            color: toastAccentColor(t.type),
           }}>
             {t.message}
           </span>
@@ -188,7 +232,6 @@ function ToastContainer({
           >
             ×
           </button>
-          {/* progress bar */}
           {!t.exiting && (
             <div style={{
               position: "absolute",
