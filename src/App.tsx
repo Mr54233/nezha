@@ -29,7 +29,7 @@ import type { FontFamily, NotificationSettings } from "./types";
 import { WelcomePage } from "./components/WelcomePage";
 import { ProjectPage } from "./components/ProjectPage";
 import { useToast } from "./components/Toast";
-import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
+import { sendNotification, isPermissionGranted, requestPermission, onAction } from "@tauri-apps/plugin-notification";
 import { useTerminalManager } from "./hooks/useTerminalManager";
 import { useWorktreeDiffStats } from "./hooks/useWorktreeDiffStats";
 import { useI18n } from "./i18n";
@@ -171,8 +171,14 @@ async function sendDesktopNotification(
   projectId: string,
   taskId: string,
   permissionRef: React.MutableRefObject<boolean>,
-  onClick: () => void,
+  _onClick: () => void,
 ) {
+  // Strategy: native (WinRT on Windows) → plugin (cross-platform) → Web Notification
+  try {
+    await invoke("send_native_notification", { title, body, projectId, taskId });
+    return;
+  } catch {}
+
   try {
     let permitted = await isPermissionGranted();
     if (!permitted && !permissionRef.current) {
@@ -181,15 +187,16 @@ async function sendDesktopNotification(
       permitted = permission === "granted";
     }
     if (permitted) {
-      await invoke("send_native_notification", { title, body, projectId, taskId });
+      sendNotification({ title, body, extra: { projectId, taskId } });
+      return;
     }
-  } catch {
-    const n = new window.Notification(title, { body });
-    n.onclick = () => {
-      n.close();
-      onClick();
-    };
-  }
+  } catch {}
+
+  const n = new window.Notification(title, { body });
+  n.onclick = () => {
+    n.close();
+    _onClick();
+  };
 }
 
 function App() {
@@ -467,7 +474,17 @@ function App() {
         updateTaskSession(task_id, session_id, session_path);
       },
     );
-    const p3 = listen("notification-clicked", () => {
+    // Plugin onAction: handles notification click on macOS/Linux (onAction doesn't fire on Windows)
+    const p3 = onAction(async (notification) => {
+      const extra = notification.extra as { projectId?: string; taskId?: string } | undefined;
+      if (extra?.projectId && extra?.taskId) {
+        pendingNotificationNav.current = null;
+        getCurrentWindow().setFocus();
+        navigateToTaskRef.current(extra.projectId, extra.taskId);
+      }
+    });
+    // WinRT Toast: handles notification click on Windows
+    const p4 = listen("notification-clicked", () => {
       const nav = pendingNotificationNav.current;
       if (nav) {
         pendingNotificationNav.current = null;
@@ -477,7 +494,8 @@ function App() {
     return () => {
       p1.then((fn) => fn());
       p2.then((fn) => fn());
-      p3.then((fn) => fn());
+      p3.then((l) => l.unregister());
+      p4.then((fn) => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

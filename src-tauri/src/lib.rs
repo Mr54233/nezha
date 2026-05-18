@@ -97,6 +97,11 @@ fn send_native_notification(
         notifier.Show(&toast).map_err(|e| e.to_string())?;
         std::mem::forget(toast);
     }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (title, body, project_id, task_id);
+        return Err("native notifications not available on this platform".into());
+    }
     Ok(())
 }
 
