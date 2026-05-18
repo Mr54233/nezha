@@ -37,7 +37,7 @@ process.stdin.on('end', () => {
     const dir = path.join(process.env.CLAUDE_PROJECT_DIR || '', '.nezha', 'events');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, sid + '.json'), JSON.stringify({ event: 'notification', session_id: sid, ts: Date.now() }));
-  } catch {});
+  } catch {}
 });
 "#;
 
@@ -123,6 +123,23 @@ fn find_task_id_by_session(app: &AppHandle, session_id: &str) -> Option<String> 
     None
 }
 
+/// Resolve an event's session_id to a task_id.
+/// If the pre-generated session_id matches, return the real task_id.
+/// Otherwise, fall back to session-to-task lookup via `find_task_id_by_session`.
+fn resolve_task_id(
+    session_id: &str,
+    pre_session_id: &Option<String>,
+    current_task_id: &str,
+    find_by_session: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    if let Some(ref pre_sid) = pre_session_id {
+        if session_id == pre_sid {
+            return Some(current_task_id.to_string());
+        }
+    }
+    find_by_session(session_id)
+}
+
 pub fn spawn_hooks_event_watcher(
     app: AppHandle,
     task_id: String,
@@ -150,7 +167,7 @@ pub fn spawn_hooks_event_watcher(
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.extension().map_or(false, |e| e == "json") {
-                        process_event_file(&app, &path, &pre_session_id);
+                        process_event_file(&app, &path, &pre_session_id, &task_id);
                         let _ = fs::remove_file(&path);
                     }
                 }
@@ -177,6 +194,7 @@ fn process_event_file(
     app: &AppHandle,
     path: &std::path::Path,
     pre_session_id: &Option<String>,
+    current_task_id: &str,
 ) {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
@@ -198,16 +216,12 @@ fn process_event_file(
         .and_then(Value::as_str)
         .unwrap_or("stop");
 
-    // Match session_id to task_id
-    let matched_task_id = if let Some(ref pre_sid) = pre_session_id {
-        if &session_id == pre_sid {
-            Some(pre_sid.clone())
-        } else {
-            find_task_id_by_session(app, &session_id)
-        }
-    } else {
-        find_task_id_by_session(app, &session_id)
-    };
+    let matched_task_id = resolve_task_id(
+        &session_id,
+        pre_session_id,
+        current_task_id,
+        |sid| find_task_id_by_session(app, sid),
+    );
 
     if let Some(tid) = matched_task_id {
         if is_task_active(app, &tid) {
@@ -220,5 +234,66 @@ fn process_event_file(
                 }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_task_id_pre_session_matches() {
+        let result = resolve_task_id(
+            "sess-abc",
+            &Some("sess-abc".to_string()),
+            "task-123",
+            |_| panic!("fallback should not be called"),
+        );
+        assert_eq!(result, Some("task-123".to_string()));
+    }
+
+    #[test]
+    fn resolve_task_id_pre_session_mismatch_uses_fallback() {
+        let result = resolve_task_id(
+            "sess-other",
+            &Some("sess-abc".to_string()),
+            "task-123",
+            |sid| {
+                if sid == "sess-other" {
+                    Some("task-456".to_string())
+                } else {
+                    None
+                }
+            },
+        );
+        assert_eq!(result, Some("task-456".to_string()));
+    }
+
+    #[test]
+    fn resolve_task_id_no_pre_session_uses_fallback() {
+        let result = resolve_task_id(
+            "sess-xyz",
+            &None,
+            "task-123",
+            |sid| {
+                if sid == "sess-xyz" {
+                    Some("task-789".to_string())
+                } else {
+                    None
+                }
+            },
+        );
+        assert_eq!(result, Some("task-789".to_string()));
+    }
+
+    #[test]
+    fn resolve_task_id_no_match_returns_none() {
+        let result = resolve_task_id(
+            "sess-unknown",
+            &None,
+            "task-123",
+            |_| None,
+        );
+        assert!(result.is_none());
     }
 }

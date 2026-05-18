@@ -10,6 +10,13 @@
 | `2321001` | fix: restore window from minimized state on notification click |
 | `c497048` | feat: toast position setting, solid color backgrounds, i18n cleanup |
 
+## 阶段状态
+
+- **Claude Code 适配**：截至 2026-05-18 阶段完成。点击跳转、最小化恢复、hooks idle 检测、session 兜底、通知设置和声音开关均已接入。
+- **声音**：属于 2026-05-18 新需求，已作为应用内 Toast 能力补齐，不改变系统桌面通知音效策略。
+- **剩余小问题**：dev 模式通知来源显示 PowerShell、历史 `.nezha/hooks/` 旧脚本清理和长期兼容性验证不阻塞 Claude Code 适配收口。
+- **下一阶段**：Codex 通知适配。Codex 不走 Claude Code hooks，需要基于 Codex session JSONL 的 watcher 补齐 idle 检测。
+
 ## 一、Windows 原生通知点击跳转
 
 之前的通知点击跳转依赖 `tauri-plugin-notification` 的 `onAction` API，无法在 Windows 上正常工作（dev 模式通知来源显示 PowerShell，点击无反应）。
@@ -171,6 +178,8 @@
 
 # 通知点击跳转开发日志 (2026-05-12)
 
+> 历史记录：本节记录 2026-05-12 当时的失败原因。2026-05-18 已通过 Rust 侧 `user-notify` / WinRT Toast 路径解决桌面通知点击跳转，并支持最小化恢复。
+
 ## 目标
 
 让用户点击通知后直接跳转到对应任务，包括两条路径：
@@ -183,7 +192,7 @@
 |------|------|------|
 | 应用内 Toast 点击跳转 | ✅ 已完成 | `showToast` 第三参数传 `onClick` 回调，点击后切换项目+选中任务+清未读 |
 | `navigateToTask` 抽取 | ✅ 已完成 | ref 包裹的跳转函数，每次渲染更新闭包，统一供 Toast / 桌面通知共用 |
-| 桌面通知点击跳转 | ❌ 未完成 | Windows 上通知回退到 PowerShell，点击无法激活 Tauri 窗口（见下方） |
+| 桌面通知点击跳转 | ✅ 已完成 | 2026-05-18 改为 Rust 原生通知路径后完成；旧失败原因保留在下方供追溯 |
 
 ## 已完成的改动
 
@@ -205,7 +214,7 @@
 
 - 打包目标从 `"all"` 改为 `["nsis"]`（WiX 下载超时，改用 NSIS 打包器）。
 
-## 桌面通知点击跳转 — 未完成原因
+## 桌面通知点击跳转 — 历史未完成原因
 
 ### 根因
 
@@ -328,8 +337,30 @@ if (!isWindowActive.current || !document.hasFocus()) {
 
 ## 后续 TODO
 
-- [ ] 桌面通知点击跳转到对应任务（见「通知点击跳转」章节）
-- [ ] Codex 支持（当前仅 Claude Code）
+- [x] 桌面通知点击跳转到对应任务
+- [ ] Codex idle 通知支持（基于 Codex session JSONL，不注入 Claude Code hooks）
 - [ ] 清理 `.nezha/hooks/` 中的旧 `.sh`/`.cjs` 文件
 - [ ] Windows 兼容性长期验证（hooks 在不同 Claude Code 版本上的行为）
-- [ ] 通知开关（用户可能不想每个 idle 都弹通知）
+- [x] 通知开关（用户可能不想每个 idle 都弹通知）
+
+## Codex 通知适配规划
+
+现状：
+
+- `pty.rs` 对 Codex 会启动 session watcher，但明确跳过 `ensure_hook_scripts()`、`inject_hooks_config()` 和 `spawn_hooks_event_watcher()`。
+- `session.rs` 已监视 Codex 的 `rollout-*.jsonl`，并能根据 `request_user_input`、需要确认的 `exec_command` / `apply_patch` emit `input_required`。
+- Codex 的 `done` / `failed` 仍由进程退出生命周期处理，不需要通知模块另开路径。
+
+缺口：
+
+- Codex watcher 当前只同步 `input_required` / `running`，没有“本轮输出结束，等待用户继续”的 `idle` 事件。
+- Codex JSONL 没有 Claude Code 的 Stop hook，因此不能用 `.nezha/events/{session_id}.json` 方案。
+
+建议实现：
+
+1. 在 `watch_codex_session` 中引入 Codex turn state，至少跟踪 `active_function_calls`、`pending_confirmation_calls`、`awaiting_user_reply`、`saw_assistant_text_since_user`、`idle_emitted_for_turn`。
+2. `response_item:function_call` 记录未完成调用；其中 `request_user_input` 直接进入 `awaiting_user_reply`，需要确认的工具继续沿用现有 `pending_confirmation_calls`。
+3. `response_item:function_call_output` / completed `custom_tool_call` 清理对应未完成调用。
+4. `event_msg:user_message` 和 `response_item:message role=user` 重置一轮状态，并从 `idle` / `input_required` 回到 `running`。
+5. `response_item:message role=assistant` 且包含非空文本时，若没有未完成调用、没有确认请求、没有用户输入请求，则 emit `task-status: idle`；同一轮只发一次。
+6. 为 reducer 加 Rust 单元测试：最终 assistant 文本触发 idle、工具调用完成后 assistant 文本触发 idle、确认请求只触发 input_required、用户消息会重置 idle 去重。

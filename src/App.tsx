@@ -19,6 +19,7 @@ import {
   clampTerminalFontSize,
   DEFAULT_TASK_DISPLAY_WINDOW,
   DEFAULT_NOTIFICATION_SETTINGS,
+  normalizeNotificationSettings,
   normalizeTaskDisplayWindow,
 } from "./types";
 import {
@@ -169,15 +170,32 @@ async function sendDesktopNotification(
   body: string,
   projectId: string,
   taskId: string,
-) {
+): Promise<void> {
   try {
     await invoke("send_native_notification", { title, body, projectId, taskId });
+    return;
   } catch {
+    // Expected fallback path — Web Notification tried next
+  }
+
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+
+  try {
+    let perm = Notification.permission;
+    if (perm === "default") {
+      perm = await Notification.requestPermission();
+    }
+    if (perm !== "granted") {
+      // User denied or dismissed notification permission — silently skip
+      return;
+    }
     const n = new window.Notification(title, { body });
     n.onclick = () => {
       n.close();
-      getCurrentWindow().setFocus();
+      getCurrentWindow().setFocus().catch(console.error);
     };
+  } catch (e) {
+    console.warn("Web Notification fallback failed:", e);
   }
 }
 
@@ -203,8 +221,11 @@ function App() {
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => {
     try {
       const stored = localStorage.getItem("nezha:notificationSettings");
-      if (stored) return { ...DEFAULT_NOTIFICATION_SETTINGS, ...JSON.parse(stored) };
-    } catch {}
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return normalizeNotificationSettings(parsed);
+      }
+    } catch (e) { console.warn("Failed to parse notification settings:", e); }
     return DEFAULT_NOTIFICATION_SETTINGS;
   });
   const handleNotificationSettingsChange = useCallback((settings: NotificationSettings) => {
@@ -415,10 +436,10 @@ function App() {
           const hasFocus = document.hasFocus();
 
           if ((!windowActive || !hasFocus) && ns.system) {
-            sendDesktopNotification(title, body, task.projectId, task_id);
+            sendDesktopNotification(title, body, task.projectId, task_id).catch(console.error);
           } else if (!isSelected && ns.inApp) {
             const toastType = status === "done" ? "success" : status === "failed" ? "error" : "info";
-            showToast(body, toastType, () => navigateToTaskRef.current(task.projectId, task_id));
+            showToast(body, toastType, { onClick: () => navigateToTaskRef.current(task.projectId, task_id), playSound: ns.sound });
           }
         }
       },

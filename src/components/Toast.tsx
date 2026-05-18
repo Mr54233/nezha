@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useRef, useEffect } f
 import { CheckCircle2, AlertCircle, AlertTriangle, Info } from "lucide-react";
 import type React from "react";
 import type { ToastPosition } from "../types";
-import { DEFAULT_NOTIFICATION_SETTINGS } from "../types";
+import { DEFAULT_NOTIFICATION_SETTINGS, normalizeNotificationSettings } from "../types";
 
 type ToastType = "error" | "warning" | "success" | "info";
 
@@ -14,8 +14,13 @@ interface ToastItem {
   exiting?: boolean;
 }
 
+export interface ToastOptions {
+  onClick?: () => void;
+  playSound?: boolean;
+}
+
 interface ToastContextValue {
-  showToast: (message: string, type?: ToastType, onClick?: () => void) => void;
+  showToast: (message: string, type?: ToastType, onClickOrOptions?: (() => void) | ToastOptions) => void;
 }
 
 const ToastContext = createContext<ToastContextValue>({ showToast: () => {} });
@@ -70,8 +75,8 @@ function ToastIcon({ type }: { type: ToastType }) {
 function readNotificationSettings() {
   try {
     const raw = localStorage.getItem("nezha:notificationSettings");
-    if (raw) return { ...DEFAULT_NOTIFICATION_SETTINGS, ...JSON.parse(raw) };
-  } catch {}
+    if (raw) return normalizeNotificationSettings(JSON.parse(raw));
+  } catch { /* Corrupt or missing settings — use defaults */ }
   return DEFAULT_NOTIFICATION_SETTINGS;
 }
 
@@ -130,7 +135,7 @@ function playNotificationSound() {
       osc3.start(now + note.start);
       osc3.stop(now + note.start + note.dur + 0.01);
     }
-  } catch {}
+  } catch (e) { console.warn("Notification sound playback failed:", e); }
 }
 
 function positionAnimation(position: ToastPosition, exiting: boolean): string {
@@ -165,10 +170,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const showToast = useCallback(
-    (message: string, type: ToastType = "error", onClick?: () => void) => {
-      if (readNotificationSettings().sound) playNotificationSound();
+    (message: string, type: ToastType = "error", onClickOrOptions?: (() => void) | ToastOptions) => {
+      const opts: ToastOptions = typeof onClickOrOptions === "function"
+        ? { onClick: onClickOrOptions }
+        : onClickOrOptions ?? {};
+      if (opts.playSound) playNotificationSound();
       const id = `${Date.now()}-${Math.random()}`;
-      setToasts((prev) => [...prev.slice(-2), { id, message, type, onClick }]);
+      setToasts((prev) => [...prev.slice(-2), { id, message, type, onClick: opts.onClick }]);
       const timer = setTimeout(() => dismiss(id), DURATION);
       timerMap.current.set(id, timer);
     },
@@ -176,8 +184,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
+    const timers = timerMap.current;
     return () => {
-      timerMap.current.forEach((timer) => clearTimeout(timer));
+      timers.forEach((timer) => clearTimeout(timer));
     };
   }, []);
 

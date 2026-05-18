@@ -193,3 +193,29 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   toastPosition: "bottom-right",
   types: { done: true, failed: true, idle: true },
 };
+
+const VALID_TOAST_POSITIONS: ToastPosition[] = ["bottom-right", "bottom-left", "top-right", "top-left"];
+
+function booleanOrDefault(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function normalizeNotificationSettings(value: unknown): NotificationSettings {
+  if (typeof value !== "object" || value === null) return DEFAULT_NOTIFICATION_SETTINGS;
+  const obj = value as Record<string, unknown>;
+  const types = (typeof obj.types === "object" && obj.types !== null) ? obj.types as Record<string, unknown> : {};
+  return {
+    enabled: booleanOrDefault(obj.enabled, true),
+    inApp: booleanOrDefault(obj.inApp, true),
+    system: booleanOrDefault(obj.system, true),
+    sound: booleanOrDefault(obj.sound, true),
+    toastPosition: VALID_TOAST_POSITIONS.includes(obj.toastPosition as ToastPosition)
+      ? (obj.toastPosition as ToastPosition)
+      : DEFAULT_NOTIFICATION_SETTINGS.toastPosition,
+    types: {
+      done: booleanOrDefault(types.done, true),
+      failed: booleanOrDefault(types.failed, true),
+      idle: booleanOrDefault(types.idle, true),
+    },
+  };
+}

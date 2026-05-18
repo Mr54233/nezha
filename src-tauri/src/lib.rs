@@ -120,7 +120,9 @@ pub fn run() {
                     }),
                     vec![],
                 )
-                .ok();
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to register notification click handler: {}", e);
+                });
                 app.manage(NotificationState {
                     manager: notif_manager,
                 });
