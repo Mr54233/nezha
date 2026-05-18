@@ -198,6 +198,13 @@ export function NotificationPanel({ settings, onChange }: NotificationPanelProps
         disabled={disabled}
         onChange={() => update({ system: !settings.system })}
       />
+      <ToggleRow
+        label={t("notif.soundToggle")}
+        description={t("notif.soundToggleDesc")}
+        checked={settings.sound}
+        disabled={disabled}
+        onChange={() => update({ sound: !settings.sound })}
+      />
 
       <div style={{
         display: "flex",

@@ -67,15 +67,70 @@ function ToastIcon({ type }: { type: ToastType }) {
   }
 }
 
-function getToastPosition(): ToastPosition {
+function readNotificationSettings() {
   try {
     const raw = localStorage.getItem("nezha:notificationSettings");
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed.toastPosition) return parsed.toastPosition;
+    if (raw) return { ...DEFAULT_NOTIFICATION_SETTINGS, ...JSON.parse(raw) };
+  } catch {}
+  return DEFAULT_NOTIFICATION_SETTINGS;
+}
+
+let audioCtx: AudioContext | null = null;
+
+function playNotificationSound() {
+  try {
+    if (!audioCtx) audioCtx = new AudioContext();
+    const ctx = audioCtx;
+    const now = ctx.currentTime;
+
+    // Crystal chime: two ascending notes (C5 → E5) with bell-like harmonics
+    const notes = [
+      { freq: 523.25, start: 0, dur: 0.15 },    // C5
+      { freq: 659.25, start: 0.09, dur: 0.2 },   // E5
+    ];
+
+    const master = ctx.createGain();
+    master.gain.value = 0.12;
+    master.connect(ctx.destination);
+
+    for (const note of notes) {
+      // Fundamental
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = note.freq;
+      env.gain.setValueAtTime(0, now + note.start);
+      env.gain.linearRampToValueAtTime(1, now + note.start + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.dur);
+      osc.connect(env).connect(master);
+      osc.start(now + note.start);
+      osc.stop(now + note.start + note.dur + 0.01);
+
+      // 2nd harmonic (octave, softer)
+      const osc2 = ctx.createOscillator();
+      const env2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.value = note.freq * 2;
+      env2.gain.setValueAtTime(0, now + note.start);
+      env2.gain.linearRampToValueAtTime(0.35, now + note.start + 0.005);
+      env2.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.dur * 0.7);
+      osc2.connect(env2).connect(master);
+      osc2.start(now + note.start);
+      osc2.stop(now + note.start + note.dur + 0.01);
+
+      // 3rd harmonic (thin metallic shimmer)
+      const osc3 = ctx.createOscillator();
+      const env3 = ctx.createGain();
+      osc3.type = "sine";
+      osc3.frequency.value = note.freq * 3;
+      env3.gain.setValueAtTime(0, now + note.start);
+      env3.gain.linearRampToValueAtTime(0.12, now + note.start + 0.003);
+      env3.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.dur * 0.5);
+      osc3.connect(env3).connect(master);
+      osc3.start(now + note.start);
+      osc3.stop(now + note.start + note.dur + 0.01);
     }
   } catch {}
-  return DEFAULT_NOTIFICATION_SETTINGS.toastPosition;
 }
 
 function positionAnimation(position: ToastPosition, exiting: boolean): string {
@@ -89,10 +144,10 @@ const DURATION = 4500;
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timerMap = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const [position, setPosition] = useState<ToastPosition>(getToastPosition);
+  const [position, setPosition] = useState<ToastPosition>(() => readNotificationSettings().toastPosition);
 
   useEffect(() => {
-    const handler = () => setPosition(getToastPosition());
+    const handler = () => setPosition(readNotificationSettings().toastPosition);
     window.addEventListener("toast-position-changed", handler);
     return () => window.removeEventListener("toast-position-changed", handler);
   }, []);
@@ -111,6 +166,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const showToast = useCallback(
     (message: string, type: ToastType = "error", onClick?: () => void) => {
+      if (readNotificationSettings().sound) playNotificationSound();
       const id = `${Date.now()}-${Math.random()}`;
       setToasts((prev) => [...prev.slice(-2), { id, message, type, onClick }]);
       const timer = setTimeout(() => dismiss(id), DURATION);

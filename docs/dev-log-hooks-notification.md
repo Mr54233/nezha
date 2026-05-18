@@ -84,6 +84,41 @@
 
 ---
 
+# 通知声音 (2026-05-18)
+
+## 改动
+
+为应用内 Toast 通知添加声音提示，使用 Web Audio API 合成原创双音水晶风铃音色（C5 → E5 上行大三度 + 泛音）。
+
+### 音色设计
+
+- **基频**：C5 (523Hz) → E5 (659Hz)，两音间隔 90ms，构成上行大三度
+- **二次泛音**：基频 ×2（八度），音量 35%，更快衰减，增加厚度
+- **三次泛音**：基频 ×3，音量 12%，极快衰减，提供金属微光质感
+- **总时长**：约 0.3 秒，快速衰减不拖沓
+- **音量**：master gain 0.12，不突兀
+
+### 设置面板
+
+`NotificationSettings` 新增 `sound: boolean` 字段（默认开启），通知设置面板在"系统通知"下方新增"通知声音"开关。开关关闭后 Toast 通知静音，不影响系统桌面通知（系统通知本身有 WinRT 音效）。
+
+### 技术细节
+
+- `AudioContext` 实例全局复用，避免每次通知创建新实例
+- 直接从 `localStorage` 读取声音设置，不依赖 props 传递
+- `playNotificationSound()` 包裹在 try/catch 中，AudioContext 不可用时静默降级
+
+## 文件改动
+
+| 文件 | 说明 |
+|------|------|
+| `src/types.ts` | `NotificationSettings` 新增 `sound: boolean`，默认 `true` |
+| `src/components/Toast.tsx` | Web Audio API 合成风铃音色；`readNotificationSettings` 替代原 `getToastPosition` |
+| `src/components/app-settings/NotificationPanel.tsx` | 新增声音开关 |
+| `src/i18n.tsx` | 中英文翻译 `notif.soundToggle` / `notif.soundToggleDesc` |
+
+---
+
 # 上游生命周期模型对齐 & 通知精简 (2026-05-16)
 
 ## 背景

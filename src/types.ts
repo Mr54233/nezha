@@ -176,6 +176,7 @@ export interface NotificationSettings {
   enabled: boolean;
   inApp: boolean;
   system: boolean;
+  sound: boolean;
   toastPosition: ToastPosition;
   types: {
     done: boolean;
@@ -188,6 +189,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   enabled: true,
   inApp: true,
   system: true,
+  sound: true,
   toastPosition: "bottom-right",
   types: { done: true, failed: true, idle: true },
 };
