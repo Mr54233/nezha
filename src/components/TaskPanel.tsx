@@ -9,7 +9,7 @@ import {
   Moon,
   Sun,
 } from "lucide-react";
-import type { Project, Task, ThemeMode, TerminalFontSize, TaskDisplayWindow, FontFamily } from "../types";
+import type { Project, Task, ThemeMode, TerminalFontSize, TaskDisplayWindow, FontFamily, NotificationSettings } from "../types";
 import { ProjectAvatar } from "./ProjectAvatar";
 import { SidebarFooterActions } from "./SidebarFooterActions";
 import { BranchBar } from "./task-panel/BranchBar";
@@ -42,6 +42,8 @@ export function TaskPanel({
   onUiFontFamilyChange,
   monoFontFamily,
   onMonoFontFamilyChange,
+  notificationSettings,
+  onNotificationSettingsChange,
   active = true,
   collapsed = false,
   onToggleCollapsed,
@@ -70,6 +72,8 @@ export function TaskPanel({
   onUiFontFamilyChange: (family: FontFamily) => void;
   monoFontFamily: FontFamily;
   onMonoFontFamilyChange: (family: FontFamily) => void;
+  notificationSettings: NotificationSettings;
+  onNotificationSettingsChange: (settings: NotificationSettings) => void;
   active?: boolean;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
@@ -219,6 +223,8 @@ export function TaskPanel({
           onUiFontFamilyChange={onUiFontFamilyChange}
           monoFontFamily={monoFontFamily}
           onMonoFontFamilyChange={onMonoFontFamilyChange}
+          notificationSettings={notificationSettings}
+          onNotificationSettingsChange={onNotificationSettingsChange}
         />
       </div>
     </div>

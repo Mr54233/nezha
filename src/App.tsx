@@ -18,13 +18,14 @@ import {
   DEFAULT_TERMINAL_FONT_SIZE,
   clampTerminalFontSize,
   DEFAULT_TASK_DISPLAY_WINDOW,
+  DEFAULT_NOTIFICATION_SETTINGS,
   normalizeTaskDisplayWindow,
 } from "./types";
 import {
   DEFAULT_UI_FONT,
   DEFAULT_MONO_FONT,
 } from "./types";
-import type { FontFamily } from "./types";
+import type { FontFamily, NotificationSettings } from "./types";
 import { WelcomePage } from "./components/WelcomePage";
 import { ProjectPage } from "./components/ProjectPage";
 import { useToast } from "./components/Toast";
@@ -210,6 +211,19 @@ function App() {
   const [monoFontFamily, setMonoFontFamily] = useState<FontFamily>(() =>
     getInitialFontFamily("nezha:monoFontFamily", DEFAULT_MONO_FONT),
   );
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => {
+    try {
+      const stored = localStorage.getItem("nezha:notificationSettings");
+      if (stored) return { ...DEFAULT_NOTIFICATION_SETTINGS, ...JSON.parse(stored) };
+    } catch {}
+    return DEFAULT_NOTIFICATION_SETTINGS;
+  });
+  const handleNotificationSettingsChange = useCallback((settings: NotificationSettings) => {
+    setNotificationSettings(settings);
+    localStorage.setItem("nezha:notificationSettings", JSON.stringify(settings));
+  }, []);
+  const notifSettingsRef = useRef(notificationSettings);
+  notifSettingsRef.current = notificationSettings;
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -410,6 +424,9 @@ function App() {
         if (status === "done") scheduleForDoneTask(task_id);
 
         if (shouldNotifyStatus(status)) {
+          const ns = notifSettingsRef.current;
+          if (!ns.enabled || !ns.types[status as keyof typeof ns.types]) return;
+
           const now = Date.now();
           const prev = lastNotified.current[task_id];
           if (prev && prev.status === status && now - prev.ts < 5000) return;
@@ -428,14 +445,14 @@ function App() {
           const windowActive = isWindowActive.current;
           const hasFocus = document.hasFocus();
 
-          if (!windowActive || !hasFocus) {
+          if ((!windowActive || !hasFocus) && ns.system) {
             pendingNotificationNav.current = { projectId: task.projectId, taskId: task_id };
             sendDesktopNotification(title, body, task.projectId, task_id, notificationPermissionRequested, async () => {
               pendingNotificationNav.current = null;
               await getCurrentWindow().setFocus();
               navigateToTaskRef.current(task.projectId, task_id);
             });
-          } else if (!isSelected) {
+          } else if (!isSelected && ns.inApp) {
             const toastType = status === "done" ? "success" : status === "failed" ? "error" : "info";
             showToast(title + ": " + body, toastType, () => navigateToTaskRef.current(task.projectId, task_id));
           }
@@ -1159,6 +1176,8 @@ function App() {
               onUiFontFamilyChange={setUiFontFamily}
               monoFontFamily={monoFontFamily}
               onMonoFontFamilyChange={setMonoFontFamily}
+              notificationSettings={notificationSettings}
+              onNotificationSettingsChange={handleNotificationSettingsChange}
             />
           );
         })}
@@ -1190,6 +1209,8 @@ function App() {
             onUiFontFamilyChange={setUiFontFamily}
             monoFontFamily={monoFontFamily}
             onMonoFontFamilyChange={setMonoFontFamily}
+            notificationSettings={notificationSettings}
+            onNotificationSettingsChange={handleNotificationSettingsChange}
           />
         </div>
       )}

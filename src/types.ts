@@ -169,3 +169,21 @@ export interface UsageSnapshot {
   codex: UsageSource<CodexUsageData>;
   fetchedAt: number;
 }
+
+export interface NotificationSettings {
+  enabled: boolean;
+  inApp: boolean;
+  system: boolean;
+  types: {
+    done: boolean;
+    failed: boolean;
+    idle: boolean;
+  };
+}
+
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enabled: true,
+  inApp: true,
+  system: true,
+  types: { done: true, failed: true, idle: true },
+};

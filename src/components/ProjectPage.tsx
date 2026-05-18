@@ -9,6 +9,7 @@ import type {
   TerminalFontSize,
   TaskDisplayWindow,
   FontFamily,
+  NotificationSettings,
 } from "../types";
 import { TaskPanel } from "./TaskPanel";
 import { NewTaskView, type NewTaskDraft } from "./NewTaskView";
@@ -75,6 +76,8 @@ export function ProjectPage({
   onUiFontFamilyChange,
   monoFontFamily,
   onMonoFontFamilyChange,
+  notificationSettings,
+  onNotificationSettingsChange,
 }: {
   project: Project;
   visible?: boolean;
@@ -136,6 +139,8 @@ export function ProjectPage({
   onUiFontFamilyChange: (family: FontFamily) => void;
   monoFontFamily: FontFamily;
   onMonoFontFamilyChange: (family: FontFamily) => void;
+  notificationSettings: NotificationSettings;
+  onNotificationSettingsChange: (settings: NotificationSettings) => void;
 }) {
   const {
     rightPanel,
@@ -294,6 +299,8 @@ export function ProjectPage({
         onUiFontFamilyChange={onUiFontFamilyChange}
         monoFontFamily={monoFontFamily}
         onMonoFontFamilyChange={onMonoFontFamilyChange}
+        notificationSettings={notificationSettings}
+        onNotificationSettingsChange={onNotificationSettingsChange}
         active={visible}
         collapsed={taskPanelCollapsed}
         onToggleCollapsed={() => setTaskPanelCollapsed((v) => !v)}
