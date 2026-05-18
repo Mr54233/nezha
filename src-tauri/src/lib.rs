@@ -49,6 +49,56 @@ impl TaskManager {
     }
 }
 
+#[tauri::command]
+fn send_native_notification(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    project_id: String,
+    task_id: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::Emitter;
+        use tauri::Manager;
+        use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+        use windows::Data::Xml::Dom::XmlDocument;
+        use windows::core::HSTRING;
+
+        let launch_arg = format!("{}:{}", project_id, task_id);
+        let xml_str = format!(
+            r#"<toast activationType="foreground" launch="{}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+            launch_arg, title, body
+        );
+
+        let xml_doc = XmlDocument::new().map_err(|e| e.to_string())?;
+        xml_doc.LoadXml(&HSTRING::from(&xml_str)).map_err(|e| e.to_string())?;
+
+        let toast = ToastNotification::CreateToastNotification(&xml_doc).map_err(|e| e.to_string())?;
+
+        let app_clone = app.clone();
+        toast.Activated(
+            &windows::Foundation::TypedEventHandler::<ToastNotification, windows::core::IInspectable>::new(
+                move |_sender, _args| {
+                    let _ = app_clone.emit("notification-clicked", ());
+                    if let Some(window) = app_clone.get_webview_window("main") {
+                        let _ = window.set_focus();
+                    }
+                    Ok(())
+                }
+            )
+        ).map_err(|e| e.to_string())?;
+
+        let notifier = ToastNotificationManager::CreateToastNotifierWithId(
+            &HSTRING::from("com.hanshutx.nezha")
+        ).map_err(|e| e.to_string())?;
+
+        notifier.Show(&toast).map_err(|e| e.to_string())?;
+        std::mem::forget(toast);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -57,6 +107,19 @@ pub fn run() {
             std::thread::spawn(|| {
                 crate::app_settings::get_login_shell_path();
             });
+            // Windows: 设置进程级 AUMID，让桌面通知能正确关联到本应用
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::ffi::OsStrExt;
+                let aumid = std::ffi::OsStr::new("com.hanshutx.nezha\0")
+                    .encode_wide()
+                    .collect::<Vec<u16>>();
+                unsafe {
+                    windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
+                        windows::core::PCWSTR(aumid.as_ptr()),
+                    ).ok().unwrap_or_default();
+                }
+            }
             Ok(())
         })
         .manage(TaskManager {
@@ -74,6 +137,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            send_native_notification,
             pty::run_task,
             pty::resume_task,
             pty::cancel_task,

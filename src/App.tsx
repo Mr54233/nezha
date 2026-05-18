@@ -28,7 +28,7 @@ import type { FontFamily } from "./types";
 import { WelcomePage } from "./components/WelcomePage";
 import { ProjectPage } from "./components/ProjectPage";
 import { useToast } from "./components/Toast";
-import { sendNotification, isPermissionGranted, requestPermission, onAction } from "@tauri-apps/plugin-notification";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { useTerminalManager } from "./hooks/useTerminalManager";
 import { useWorktreeDiffStats } from "./hooks/useWorktreeDiffStats";
 import { useI18n } from "./i18n";
@@ -135,7 +135,7 @@ function isAttentionStatus(status: TaskStatus): boolean {
 }
 
 function shouldNotifyStatus(status: TaskStatus): boolean {
-  return status === "done" || status === "failed";
+  return status === "done" || status === "failed" || status === "idle";
 }
 
 function getSystemPrefersDark() {
@@ -170,6 +170,7 @@ async function sendDesktopNotification(
   projectId: string,
   taskId: string,
   permissionRef: React.MutableRefObject<boolean>,
+  onClick: () => void,
 ) {
   try {
     let permitted = await isPermissionGranted();
@@ -179,10 +180,14 @@ async function sendDesktopNotification(
       permitted = permission === "granted";
     }
     if (permitted) {
-      sendNotification({ title, body, extra: { projectId, taskId } });
+      await invoke("send_native_notification", { title, body, projectId, taskId });
     }
   } catch {
-    // Notification not available (e.g. unsupported platform)
+    const n = new window.Notification(title, { body });
+    n.onclick = () => {
+      n.close();
+      onClick();
+    };
   }
 }
 
@@ -248,14 +253,21 @@ function App() {
 
   const pendingNotificationNav = useRef<{ projectId: string; taskId: string } | null>(null);
   useEffect(() => {
-    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-      if (!focused) return;
+    const handleNav = () => {
       const nav = pendingNotificationNav.current;
       if (!nav) return;
       pendingNotificationNav.current = null;
       navigateToTaskRef.current(nav.projectId, nav.taskId);
+    };
+    window.addEventListener("focus", handleNav);
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) return;
+      handleNav();
     });
-    return () => { unlisten.then((fn) => fn()); };
+    return () => {
+      window.removeEventListener("focus", handleNav);
+      unlisten.then((fn) => fn());
+    };
   }, []);
 
   const notificationPermissionRequested = useRef(false);
@@ -383,6 +395,8 @@ function App() {
     init().catch(console.error);
   }, []);
 
+  const lastNotified = useRef<Record<string, { status: string; ts: number }>>({});
+
   // Tauri event listeners (agent-output is handled inside useTerminalManager)
   useEffect(() => {
     const p1 = listen<{ task_id: string; status: TaskStatus; failure_reason?: string }>(
@@ -396,21 +410,33 @@ function App() {
         if (status === "done") scheduleForDoneTask(task_id);
 
         if (shouldNotifyStatus(status)) {
+          const now = Date.now();
+          const prev = lastNotified.current[task_id];
+          if (prev && prev.status === status && now - prev.ts < 5000) return;
+          lastNotified.current[task_id] = { status, ts: now };
+
           const task = tasksRef.current.find((t) => t.id === task_id);
           if (!task) return;
           const titleKey =
             status === "done" ? "taskNotif.done"
-              : "taskNotif.failed";
+              : status === "failed" ? "taskNotif.failed"
+              : "taskNotif.idle";
           const title = t(titleKey);
           const body = task.name ?? task.prompt.slice(0, 80);
           const view = projectViewsRef.current[task.projectId];
           const isSelected = view?.selectedTaskId === task_id;
+          const windowActive = isWindowActive.current;
+          const hasFocus = document.hasFocus();
 
-          if (!isWindowActive.current || !document.hasFocus()) {
+          if (!windowActive || !hasFocus) {
             pendingNotificationNav.current = { projectId: task.projectId, taskId: task_id };
-            sendDesktopNotification(title, body, task.projectId, task_id, notificationPermissionRequested);
+            sendDesktopNotification(title, body, task.projectId, task_id, notificationPermissionRequested, async () => {
+              pendingNotificationNav.current = null;
+              await getCurrentWindow().setFocus();
+              navigateToTaskRef.current(task.projectId, task_id);
+            });
           } else if (!isSelected) {
-            const toastType = status === "done" ? "success" : "error";
+            const toastType = status === "done" ? "success" : status === "failed" ? "error" : "info";
             showToast(title + ": " + body, toastType, () => navigateToTaskRef.current(task.projectId, task_id));
           }
         }
@@ -423,20 +449,17 @@ function App() {
         updateTaskSession(task_id, session_id, session_path);
       },
     );
-    // Production path: notification plugin routes click back to app with extra data
-    let p3: ReturnType<typeof onAction> extends Promise<infer T> ? T : never;
-    onAction(async (notification) => {
-      const extra = notification.extra as { projectId?: string; taskId?: string } | undefined;
-      if (extra?.projectId && extra?.taskId) {
+    const p3 = listen("notification-clicked", () => {
+      const nav = pendingNotificationNav.current;
+      if (nav) {
         pendingNotificationNav.current = null;
-        await getCurrentWindow().setFocus();
-        navigateToTaskRef.current(extra.projectId, extra.taskId);
+        navigateToTaskRef.current(nav.projectId, nav.taskId);
       }
-    }).then((listener) => { p3 = listener; });
+    });
     return () => {
       p1.then((fn) => fn());
       p2.then((fn) => fn());
-      p3?.unregister();
+      p3.then((fn) => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

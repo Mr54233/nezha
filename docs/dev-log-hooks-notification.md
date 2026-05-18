@@ -1,3 +1,70 @@
+# Windows 原生通知点击跳转 (2026-05-18)
+
+## 背景
+
+之前的通知点击跳转依赖 `tauri-plugin-notification` 的 `onAction` API，但该 API 需要 `registerActionTypes` 命令（当前版本不支持），导致点击通知后无法激活应用窗口。Windows dev 模式下通知显示为 PowerShell 来源，安装版也无法正确关联到应用。
+
+## 方案
+
+绕过 Tauri 插件的 JS 层通知 API，改用 Rust 侧直接调用 WinRT Toast Notification API：
+
+1. **进程级 AUMID** — `setup` 中调用 `SetCurrentProcessExplicitAppUserModelID("com.hanshutx.nezha")`，让 Windows 识别通知来源
+2. **WinRT Toast** — 用 `windows` crate 直接创建 `ToastNotification`，注册 `Activated` 回调，通过 `CreateToastNotifierWithId` 指定 AUMID
+3. **点击回调** — `Activated` 回调中 emit `notification-clicked` Tauri 事件 + `window.set_focus()` 激活窗口
+4. **前端监听** — 监听 `notification-clicked` 事件，执行 `navigateToTask` 跳转到对应任务
+5. **兜底** — `window focus` / `onFocusChanged` 事件 + `pendingNotificationNav`，用户手动切回也能跳转
+
+## 改动
+
+### 1. 通知触发扩展
+
+- `shouldNotifyStatus()` 从仅 `done`/`failed` 扩展为包含 `idle`（agent 等待输入）
+- 同一任务同一状态 5 秒内去重（`lastNotified` ref），解决后端双路径（hooks + session JSONL）重复触发
+
+### 2. Rust 侧原生通知
+
+- 新增 `send_native_notification` 命令：WinRT `ToastNotification` + `Activated` 回调
+- `std::mem::forget(toast)` 防止 Toast 对象被 drop 后回调失效
+- 新增 `windows` crate 依赖（features: `Win32_UI_Shell`, `UI_Notifications`, `Data_Xml_Dom`, `Foundation`）
+
+### 3. AUMID 设置
+
+- `setup` 中通过 `SetCurrentProcessExplicitAppUserModelID` 设置进程级 AUMID
+- Toast 通知通过 `CreateToastNotifierWithId("com.hanshutx.nezha")` 使用相同 AUMID
+
+### 4. 前端事件流
+
+- 新增 `notification-clicked` 事件监听（Rust → 前端）
+- `pendingNotificationNav` ref 存储待跳转信息，供多条路径共用：
+  - WinRT `Activated` 回调（点击原生通知）
+  - `window focus` 事件（手动切回）
+  - `onFocusChanged` Tauri 事件（手动切回）
+
+### 5. Toast 点击跳转
+
+- 应用内 Toast 点击跳转保持不变（`showToast` 第三参数 `onClick`）
+
+### 6. 权限
+
+- `capabilities/default.json` 新增 `notification:allow-register-action-types`（备用）
+
+## 文件改动
+
+| 文件 | 说明 |
+|------|------|
+| `src-tauri/src/lib.rs` | 新增 `send_native_notification`（WinRT Toast）、AUMID 设置、移除 debug 命令 |
+| `src-tauri/Cargo.toml` | 新增 `windows` crate（Windows 目标）、移除 `notify-rust` 直连依赖 |
+| `src-tauri/capabilities/default.json` | 新增 `notification:allow-register-action-types` |
+| `src/App.tsx` | `shouldNotifyStatus` 含 idle、通知去重、WinRT 回调事件监听、清理调试代码 |
+
+## 已知限制
+
+- **dev 模式下通知来源显示为 PowerShell** — Windows 平台限制，不影响安装版
+- **`std::mem::forget(toast)` 内存泄漏** — 每次通知约泄漏一个 COM 对象，量极小可接受
+- **非 Windows 平台** — `send_native_notification` 当前仅实现 Windows，其他平台走 `window.Notification` fallback
+
+---
+
 # 上游生命周期模型对齐 & 通知精简 (2026-05-16)
 
 ## 背景
