@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import type { Task, UsageWindow, TerminalFontSize, FontFamily } from "../types";
 import { permissionModeLabel } from "../types";
 import { StatusIcon } from "./StatusIcon";
 import { TerminalView } from "./TerminalView";
 import { SessionView } from "./SessionView";
+import { useToast } from "./Toast";
 import { shortenPath, getUsageColor } from "../utils";
 import { useUsageSnapshot } from "../hooks/useUsageSnapshot";
+import { useTerminalSelectionActive } from "../hooks/useTerminalSelectionActive";
 import { ENABLE_USAGE_INSIGHTS } from "../platform";
 import { useI18n } from "../i18n";
 import s from "../styles";
@@ -20,6 +23,7 @@ import {
   Trash2,
   AlertTriangle,
   CheckCircle2,
+  Download,
 } from "lucide-react";
 
 interface SessionMetrics {
@@ -55,6 +59,7 @@ function InlineWindow({ label, window }: { label: string; window: UsageWindow })
 
 export function RunningView({
   task,
+  projectPath,
   runCount = 0,
   visible = true,
   projectActive = true,
@@ -77,6 +82,7 @@ export function RunningView({
   monoFontFamily,
 }: {
   task: Task;
+  projectPath: string;
   runCount?: number;
   visible?: boolean;
   projectActive?: boolean;
@@ -99,6 +105,7 @@ export function RunningView({
   monoFontFamily: FontFamily;
 }) {
   const { t } = useI18n();
+  const { showToast } = useToast();
   const isActive =
     task.status === "pending" || task.status === "running" || task.status === "input_required";
   const isDetached = task.status === "detached";
@@ -106,6 +113,7 @@ export function RunningView({
   const sessionPath = task.claudeSessionPath ?? task.codexSessionPath;
   const resumeSessionId = task.agent === "codex" ? task.codexSessionId : task.claudeSessionId;
   const restoreState = getRestoreState?.() ?? {};
+  const terminalSelectionActive = useTerminalSelectionActive();
 
   const { snapshot: usageSnapshot } = useUsageSnapshot(visible && ENABLE_USAGE_INSIGHTS);
 
@@ -115,6 +123,7 @@ export function RunningView({
   const [hoverHeader, setHoverHeader] = useState(false);
   const [generatingName, setGeneratingName] = useState(false);
   const [worktreeBusy, setWorktreeBusy] = useState<"merge" | "discard" | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [bannerCompact, setBannerCompact] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const interruptedBannerRef = useRef<HTMLDivElement>(null);
@@ -134,6 +143,53 @@ export function RunningView({
       // toast already shown by parent handler
     } finally {
       setGeneratingName(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (exporting || !sessionPath) return;
+    setExporting(true);
+    try {
+      const titleSource = (task.name ?? task.prompt).trim();
+      // 仅保留汉字/字母/数字/连字符，其它替换成 _。避免出现非法文件名字符。
+      const slug =
+        titleSource
+          .slice(0, 50)
+          .replace(/[^\w\u4e00-\u9fa5-]+/g, "_")
+          .replace(/^_+|_+$/g, "") || "session";
+      const date = new Date().toISOString().slice(0, 10);
+      const defaultName = `nezha-${slug}-${date}.md`;
+
+      const outputPath = await saveDialog({
+        title: t("running.exportSaveDialogTitle"),
+        defaultPath: defaultName,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!outputPath) return;
+
+      await invoke<void>("export_session_markdown", {
+        sessionPath,
+        projectPath,
+        isCodex: task.agent === "codex",
+        outputPath,
+        taskMeta: {
+          name: task.name,
+          prompt: task.prompt,
+          agent: task.agent,
+          createdAt: task.createdAt,
+          sessionId: task.agent === "codex" ? task.codexSessionId : task.claudeSessionId,
+          worktreeBranch: task.worktreeBranch,
+          baseBranch: task.baseBranch,
+          additions: task.additions,
+          deletions: task.deletions,
+          failureReason: task.failureReason,
+        },
+      });
+      showToast(t("running.exportSuccess", { path: outputPath }), "success");
+    } catch (err) {
+      showToast(t("running.exportFailed", { error: String(err) }), "error");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -160,7 +216,7 @@ export function RunningView({
     // 项目重新激活时这里会立即补拉一次。注意这里用的是 projectActive
     // 而不是 visible —— 后者在同项目内打开 FileViewer / GitDiff 时也会是 false，
     // 那种场景下不应该中断正在运行任务的 duration 更新。
-    if (!projectActive) return;
+    if (!projectActive || terminalSelectionActive) return;
 
     let cancelled = false;
 
@@ -187,7 +243,7 @@ export function RunningView({
     return () => {
       cancelled = true;
     };
-  }, [sessionPath, isActive, projectActive]);
+  }, [sessionPath, isActive, projectActive, terminalSelectionActive]);
 
   return (
     <div
@@ -320,6 +376,17 @@ export function RunningView({
               <span>{t("running.cancel")}</span>
             </button>
           </>
+        )}
+        {!isActive && sessionPath && (
+          <button
+            style={exporting ? s.exportBtnBusy : s.exportBtn}
+            disabled={exporting}
+            title={t("running.exportMarkdown")}
+            onClick={handleExport}
+          >
+            <Download size={12} strokeWidth={2.5} />
+            <span>{t("running.exportMarkdown")}</span>
+          </button>
         )}
         {!isActive &&
           !isDetached &&
