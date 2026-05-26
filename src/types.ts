@@ -48,6 +48,7 @@ export type TaskStatus =
   | "input_required"
   | "detached"
   | "interrupted"
+  | "idle"
   | "done"
   | "failed"
   | "cancelled";
@@ -64,6 +65,7 @@ export interface Task {
   attentionRequestedAt?: number;
   starred?: boolean;
   failureReason?: string;
+  hasUnreadEvent?: boolean;
   codexSessionId?: string;
   codexSessionPath?: string;
   claudeSessionId?: string;
@@ -104,6 +106,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   input_required: "Needs confirmation",
   detached: "Terminal disconnected",
   interrupted: "Interrupted",
+  idle: "Waiting for input",
   done: "Done",
   failed: "Failed",
   cancelled: "Cancelled",
@@ -114,7 +117,8 @@ export function isActiveTaskStatus(status: TaskStatus): boolean {
     status === "pending" ||
     status === "running" ||
     status === "input_required" ||
-    status === "detached"
+    status === "detached" ||
+    status === "idle"
   );
 }
 
@@ -164,4 +168,56 @@ export interface UsageSnapshot {
   claude: UsageSource<ClaudeUsageData>;
   codex: UsageSource<CodexUsageData>;
   fetchedAt: number;
+}
+
+export type ToastPosition = "bottom-right" | "bottom-left" | "top-right" | "top-left";
+
+export interface NotificationSettings {
+  enabled: boolean;
+  inApp: boolean;
+  system: boolean;
+  sound: boolean;
+  toastPosition: ToastPosition;
+  types: {
+    done: boolean;
+    failed: boolean;
+    idle: boolean;
+    input_required: boolean;
+  };
+}
+
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enabled: true,
+  inApp: true,
+  system: true,
+  sound: true,
+  toastPosition: "bottom-right",
+  types: { done: true, failed: true, idle: true, input_required: true },
+};
+
+const VALID_TOAST_POSITIONS: ToastPosition[] = ["bottom-right", "bottom-left", "top-right", "top-left"];
+
+function booleanOrDefault(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+export function normalizeNotificationSettings(value: unknown): NotificationSettings {
+  if (typeof value !== "object" || value === null) return DEFAULT_NOTIFICATION_SETTINGS;
+  const obj = value as Record<string, unknown>;
+  const types = (typeof obj.types === "object" && obj.types !== null) ? obj.types as Record<string, unknown> : {};
+  return {
+    enabled: booleanOrDefault(obj.enabled, true),
+    inApp: booleanOrDefault(obj.inApp, true),
+    system: booleanOrDefault(obj.system, true),
+    sound: booleanOrDefault(obj.sound, true),
+    toastPosition: VALID_TOAST_POSITIONS.includes(obj.toastPosition as ToastPosition)
+      ? (obj.toastPosition as ToastPosition)
+      : DEFAULT_NOTIFICATION_SETTINGS.toastPosition,
+    types: {
+      done: booleanOrDefault(types.done, true),
+      failed: booleanOrDefault(types.failed, true),
+      idle: booleanOrDefault(types.idle, true),
+      input_required: booleanOrDefault(types.input_required, true),
+    },
+  };
 }

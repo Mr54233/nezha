@@ -1,14 +1,31 @@
-import { createContext, useContext, useState, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
+import { CheckCircle2, AlertCircle, AlertTriangle, Info } from "lucide-react";
 import type React from "react";
+import type { ToastPosition } from "../types";
+import { DEFAULT_NOTIFICATION_SETTINGS, normalizeNotificationSettings } from "../types";
+
+type ToastType = "error" | "warning" | "success" | "info";
 
 interface ToastItem {
   id: string;
   message: string;
-  type: "error" | "warning" | "success";
+  type: ToastType;
+  onClick?: () => void;
+  exiting?: boolean;
+  persistent?: boolean;
+  paused?: boolean;
+  actionLabel?: string;
+}
+
+export interface ToastOptions {
+  onClick?: () => void;
+  playSound?: boolean;
+  persistent?: boolean;
+  actionLabel?: string;
 }
 
 interface ToastContextValue {
-  showToast: (message: string, type?: "error" | "warning" | "success") => void;
+  showToast: (message: string, type?: ToastType, onClickOrOptions?: (() => void) | ToastOptions) => void;
 }
 
 const ToastContext = createContext<ToastContextValue>({ showToast: () => {} });
@@ -17,18 +34,132 @@ export function useToast() {
   return useContext(ToastContext);
 }
 
+export type { ToastType };
+
+function toastAccentColor(type: ToastType): string {
+  switch (type) {
+    case "error":
+      return "var(--toast-error-fg)";
+    case "warning":
+      return "var(--toast-warning-fg)";
+    case "success":
+      return "var(--toast-success-fg)";
+    case "info":
+      return "var(--toast-info-fg)";
+  }
+}
+
+function toastBgColor(type: ToastType): string {
+  switch (type) {
+    case "error":
+      return "var(--toast-error-bg)";
+    case "warning":
+      return "var(--toast-warning-bg)";
+    case "success":
+      return "var(--toast-success-bg)";
+    case "info":
+      return "var(--toast-info-bg)";
+  }
+}
+
+function ToastIcon({ type }: { type: ToastType }) {
+  const size = 16;
+  const color = toastAccentColor(type);
+  switch (type) {
+    case "error":
+      return <AlertCircle size={size} color={color} />;
+    case "warning":
+      return <AlertTriangle size={size} color={color} />;
+    case "success":
+      return <CheckCircle2 size={size} color={color} />;
+    case "info":
+      return <Info size={size} color={color} />;
+  }
+}
+
+function readNotificationSettings() {
+  try {
+    const raw = localStorage.getItem("nezha:notificationSettings");
+    if (raw) return normalizeNotificationSettings(JSON.parse(raw));
+  } catch { /* Corrupt or missing settings — use defaults */ }
+  return DEFAULT_NOTIFICATION_SETTINGS;
+}
+
+let audioCtx: AudioContext | null = null;
+
+function playNotificationSound() {
+  try {
+    if (!audioCtx) audioCtx = new AudioContext();
+    const ctx = audioCtx;
+    const now = ctx.currentTime;
+
+    // Crystal chime: two ascending notes (C5 → E5) with bell-like harmonics
+    const notes = [
+      { freq: 523.25, start: 0, dur: 0.15 },    // C5
+      { freq: 659.25, start: 0.09, dur: 0.2 },   // E5
+    ];
+
+    const master = ctx.createGain();
+    master.gain.value = 0.12;
+    master.connect(ctx.destination);
+
+    for (const note of notes) {
+      // Fundamental
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = note.freq;
+      env.gain.setValueAtTime(0, now + note.start);
+      env.gain.linearRampToValueAtTime(1, now + note.start + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.dur);
+      osc.connect(env).connect(master);
+      osc.start(now + note.start);
+      osc.stop(now + note.start + note.dur + 0.01);
+
+      // 2nd harmonic (octave, softer)
+      const osc2 = ctx.createOscillator();
+      const env2 = ctx.createGain();
+      osc2.type = "sine";
+      osc2.frequency.value = note.freq * 2;
+      env2.gain.setValueAtTime(0, now + note.start);
+      env2.gain.linearRampToValueAtTime(0.35, now + note.start + 0.005);
+      env2.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.dur * 0.7);
+      osc2.connect(env2).connect(master);
+      osc2.start(now + note.start);
+      osc2.stop(now + note.start + note.dur + 0.01);
+
+      // 3rd harmonic (thin metallic shimmer)
+      const osc3 = ctx.createOscillator();
+      const env3 = ctx.createGain();
+      osc3.type = "sine";
+      osc3.frequency.value = note.freq * 3;
+      env3.gain.setValueAtTime(0, now + note.start);
+      env3.gain.linearRampToValueAtTime(0.12, now + note.start + 0.003);
+      env3.gain.exponentialRampToValueAtTime(0.001, now + note.start + note.dur * 0.5);
+      osc3.connect(env3).connect(master);
+      osc3.start(now + note.start);
+      osc3.stop(now + note.start + note.dur + 0.01);
+    }
+  } catch (e) { console.warn("Notification sound playback failed:", e); }
+}
+
+function positionAnimation(position: ToastPosition, exiting: boolean): string {
+  const dir = position.includes("right") ? "right" : "left";
+  const suffix = exiting ? "out" : "in";
+  return `toast-${dir}-${suffix} 0.25s ease forwards`;
+}
+
+const DURATION = 4500;
+
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const timerMap = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [position, setPosition] = useState<ToastPosition>(() => readNotificationSettings().toastPosition);
 
-  const showToast = useCallback((message: string, type: "error" | "warning" | "success" = "error") => {
-    const id = `${Date.now()}-${Math.random()}`;
-    setToasts((prev) => [...prev.slice(-2), { id, message, type }]);
-    const timer = setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-      timerMap.current.delete(id);
-    }, 5000);
-    timerMap.current.set(id, timer);
+  useEffect(() => {
+    const handler = () => setPosition(readNotificationSettings().toastPosition);
+    window.addEventListener("toast-position-changed", handler);
+    return () => window.removeEventListener("toast-position-changed", handler);
   }, []);
 
   const dismiss = useCallback((id: string) => {
@@ -37,13 +168,56 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(timer);
       timerMap.current.delete(id);
     }
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    setToasts((prev) => prev.map((t) => t.id === id ? { ...t, exiting: true } : t));
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 200);
+  }, []);
+
+  const pause = useCallback((id: string) => {
+    const timer = timerMap.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timerMap.current.delete(id);
+      setToasts((prev) => prev.map((t) => t.id === id ? { ...t, paused: true } : t));
+    }
+  }, []);
+
+  const resume = useCallback((id: string) => {
+    if (timerMap.current.has(id)) return;
+    // 恢复时重置为固定剩余时间
+    const timer = setTimeout(() => dismiss(id), 2000);
+    timerMap.current.set(id, timer);
+    setToasts((prev) => prev.map((t) => t.id === id ? { ...t, paused: false } : t));
+  }, [dismiss]);
+
+  const showToast = useCallback(
+    (message: string, type: ToastType = "error", onClickOrOptions?: (() => void) | ToastOptions) => {
+      const opts: ToastOptions = typeof onClickOrOptions === "function"
+        ? { onClick: onClickOrOptions }
+        : onClickOrOptions ?? {};
+      if (opts.playSound) playNotificationSound();
+      const id = `${Date.now()}-${Math.random()}`;
+      setToasts((prev) => [...prev.slice(-2), { id, message, type, onClick: opts.onClick, persistent: opts.persistent, actionLabel: opts.actionLabel }]);
+      if (!opts.persistent) {
+        const timer = setTimeout(() => dismiss(id), DURATION);
+        timerMap.current.set(id, timer);
+      }
+    },
+    [dismiss],
+  );
+
+  useEffect(() => {
+    const timers = timerMap.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+    };
   }, []);
 
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <ToastContainer toasts={toasts} onDismiss={dismiss} />
+      <ToastContainer toasts={toasts} onDismiss={dismiss} onPause={pause} onResume={resume} position={position} />
     </ToastContext.Provider>
   );
 }
@@ -51,66 +225,147 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 function ToastContainer({
   toasts,
   onDismiss,
+  onPause,
+  onResume,
+  position,
 }: {
   toasts: ToastItem[];
   onDismiss: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+  position: ToastPosition;
 }) {
   if (toasts.length === 0) return null;
+
+  const isTop = position.startsWith("top");
+  const containerStyle: React.CSSProperties = {
+    position: "fixed",
+    zIndex: 9999,
+    display: "flex",
+    flexDirection: isTop ? "column" : "column-reverse",
+    gap: 10,
+    width: 360,
+    pointerEvents: "none",
+    ...(position === "bottom-right" ? { bottom: 20, right: 20 } :
+      position === "bottom-left" ? { bottom: 20, left: 20 } :
+      position === "top-right" ? { top: 20, right: 20 } :
+      { top: 20, left: 20 }),
+  };
+
   return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: 20,
-        right: 20,
-        zIndex: 9999,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        maxWidth: 380,
-        pointerEvents: "none",
-      }}
-    >
+    <div style={containerStyle}>
       {toasts.map((t) => (
         <div
           key={t.id}
-          className="toast-item"
+          onClick={() => {
+            if (t.onClick) t.onClick();
+            onDismiss(t.id);
+          }}
           style={{
             pointerEvents: "auto",
             display: "flex",
-            alignItems: "flex-start",
-            gap: 10,
-            padding: "10px 12px 10px 14px",
-            borderRadius: 10,
-            background:
-              t.type === "error"
-                ? "var(--danger)"
-                : t.type === "success"
-                  ? "var(--success)"
-                  : "var(--warning)",
-            color: "var(--fg-on-accent)",
-            fontSize: 12.5,
-            fontWeight: 500,
-            boxShadow: "var(--shadow-toast)",
-            lineHeight: 1.5,
+            alignItems: "center",
+            gap: 12,
+            padding: "12px 14px",
+            borderRadius: "var(--radius-lg)",
+            background: toastBgColor(t.type),
+            border: `1px solid ${toastAccentColor(t.type)}22`,
+            boxShadow: "var(--shadow-md)",
+            animation: positionAnimation(position, !!t.exiting),
+            transition: "box-shadow 0.15s ease, transform 0.15s ease",
+            cursor: t.onClick ? "pointer" : "default",
+            position: "relative",
+            overflow: "hidden",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.boxShadow = "var(--shadow-popover)";
+            if (t.onClick) e.currentTarget.style.transform = "translateY(-1px)";
+            if (!t.persistent) onPause(t.id);
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.boxShadow = "var(--shadow-md)";
+            e.currentTarget.style.transform = "none";
+            if (!t.persistent && !t.exiting) onResume(t.id);
           }}
         >
-          <span style={{ flex: 1 }}>{t.message}</span>
+          <div style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+            <ToastIcon type={t.type} />
+          </div>
+          <span style={{
+            flex: 1,
+            fontSize: 12.5,
+            fontWeight: 500,
+            lineHeight: 1.5,
+            color: toastAccentColor(t.type),
+          }}>
+            {t.message}
+          </span>
+          {t.actionLabel && t.onClick && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                t.onClick?.();
+                onDismiss(t.id);
+              }}
+              style={{
+                background: "var(--accent)",
+                border: "none",
+                borderRadius: 6,
+                color: "var(--accent-contrast, white)",
+                fontSize: 12,
+                fontWeight: 600,
+                padding: "4px 12px",
+                cursor: "pointer",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+                transition: "opacity 0.12s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.85"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            >
+              {t.actionLabel}
+            </button>
+          )}
           <button
-            onClick={() => onDismiss(t.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDismiss(t.id);
+            }}
             style={{
               background: "none",
               border: "none",
               cursor: "pointer",
-              color: "var(--inverse-muted)",
-              padding: "0 0 0 4px",
-              fontSize: 18,
+              color: "var(--text-hint)",
+              padding: "2px",
+              fontSize: 16,
               lineHeight: 1,
               flexShrink: 0,
               fontFamily: "inherit",
+              borderRadius: 4,
+              transition: "color 0.15s ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "var(--text-secondary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--text-hint)";
             }}
           >
             ×
           </button>
+          {!t.exiting && !t.persistent && (
+            <div style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              height: 2,
+              background: toastAccentColor(t.type),
+              opacity: 0.3,
+              borderRadius: "0 0 0 var(--radius-lg)",
+              animation: `toast-progress ${DURATION}ms linear forwards`,
+              animationPlayState: t.paused ? "paused" : "running",
+            }} />
+          )}
         </div>
       ))}
     </div>

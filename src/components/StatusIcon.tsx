@@ -6,16 +6,25 @@ import {
   Loader2,
   AlertCircle,
   AlertTriangle,
+  Clock,
 } from "lucide-react";
 import type { TaskStatus } from "../types";
 
 export function StatusIcon({ status }: { status: TaskStatus }) {
   switch (status) {
+    case "pending":
+      return (
+        <Circle
+          size={14}
+          strokeWidth={2.5}
+          style={{ color: "var(--accent)", animation: "pulse 2s ease-in-out infinite" }}
+        />
+      );
     case "running":
       return (
         <Loader2
           size={14}
-          style={{ animation: "spin 1s linear infinite", color: "var(--text-muted)" }}
+          style={{ animation: "spin 1s linear infinite", color: "var(--accent)" }}
         />
       );
     case "input_required":
@@ -24,6 +33,8 @@ export function StatusIcon({ status }: { status: TaskStatus }) {
       return <AlertTriangle size={14} style={{ color: "var(--warning)" }} />;
     case "interrupted":
       return <AlertTriangle size={14} style={{ color: "var(--warning)" }} />;
+    case "idle":
+      return <Clock size={14} style={{ color: "var(--accent)" }} />;
     case "done":
       return <CheckCircle2 size={14} style={{ color: "var(--success)" }} />;
     case "failed":

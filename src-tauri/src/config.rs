@@ -35,6 +35,8 @@ pub struct AgentConfig {
     pub claude_version: String,
     #[serde(default)]
     pub codex_version: String,
+    #[serde(default)]
+    pub hooks_consent: Option<bool>,
 }
 
 fn default_permission_mode() -> String {
@@ -61,6 +63,7 @@ impl Default for ProjectConfig {
                 prompt_prefix: String::new(),
                 claude_version: String::new(),
                 codex_version: String::new(),
+                hooks_consent: None,
             },
             git: GitConfig {
                 commit_prompt: "You are a git commit message generator. Based on the provided git diff, write a concise and descriptive commit message. Follow these rules:\n1. Use the imperative mood (e.g., \"Add feature\" not \"Added feature\")\n2. First line: type(scope): short summary (50 chars or less)\n   Types: feat, fix, docs, style, refactor, test, chore\n3. If needed, add a blank line then a brief body explaining what and why\n4. Output ONLY the commit message text, no explanations or markdown formatting".to_string(),
@@ -131,6 +134,23 @@ pub fn write_project_config(project_path: String, config: ProjectConfig) -> Resu
     let config_path = nezha_dir.join("config.toml");
     let raw = toml::to_string_pretty(&config).map_err(|e| e.to_string())?;
     atomic_write(&config_path, &raw)
+}
+
+/// Sets `hooks_consent` in project config. If consent is granted, also injects hooks.
+/// If consent is revoked, removes injected hooks from `.claude/settings.local.json`.
+#[tauri::command]
+pub fn set_hooks_consent(_app: tauri::AppHandle, project_path: String, consent: bool) -> Result<(), String> {
+    let mut config = read_project_config(project_path.clone())?;
+    config.agent.hooks_consent = Some(consent);
+    write_project_config(project_path.clone(), config)?;
+
+    if consent {
+        crate::hooks::ensure_hook_scripts(&project_path)?;
+        crate::hooks::inject_hooks_config(&project_path)?;
+    } else {
+        crate::hooks::remove_hooks_config(&project_path)?;
+    }
+    Ok(())
 }
 
 fn home_dir() -> Result<std::path::PathBuf, String> {

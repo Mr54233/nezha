@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { Search, FolderOpen, GitBranch, Layers, Plus, Trash2, Clock } from "lucide-react";
-import type { Project, Task, ThemeMode, TerminalFontSize, TaskDisplayWindow, FontFamily } from "../types";
+import type { Project, Task, ThemeMode, TerminalFontSize, TaskDisplayWindow, FontFamily, NotificationSettings } from "../types";
 import { getAvatarGradient, shortenPath } from "../utils";
 import { ProjectAvatar } from "./ProjectAvatar";
 import { SidebarFooterActions } from "./SidebarFooterActions";
@@ -83,6 +83,8 @@ export function WelcomePage({
   onUiFontFamilyChange,
   monoFontFamily,
   onMonoFontFamilyChange,
+  notificationSettings,
+  onNotificationSettingsChange,
 }: {
   projects: Project[];
   tasks: Task[];
@@ -102,6 +104,8 @@ export function WelcomePage({
   onUiFontFamilyChange: (family: FontFamily) => void;
   monoFontFamily: FontFamily;
   onMonoFontFamilyChange: (family: FontFamily) => void;
+  notificationSettings: NotificationSettings;
+  onNotificationSettingsChange: (settings: NotificationSettings) => void;
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
@@ -162,6 +166,9 @@ export function WelcomePage({
               onUiFontFamilyChange={onUiFontFamilyChange}
               monoFontFamily={monoFontFamily}
               onMonoFontFamilyChange={onMonoFontFamilyChange}
+              notificationSettings={notificationSettings}
+              onNotificationSettingsChange={onNotificationSettingsChange}
+              projectPath=""
             />
           </div>
         </div>

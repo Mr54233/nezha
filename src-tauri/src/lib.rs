@@ -4,6 +4,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use usage::CodexRpcClient;
+use user_notify::{get_notification_manager, NotificationBuilder, NotificationManager, NotificationResponseAction};
 
 mod agent_assist;
 mod analytics;
@@ -11,6 +12,7 @@ mod app_settings;
 mod config;
 mod fs;
 mod git;
+mod hooks;
 mod notification;
 mod platform;
 mod pty;
@@ -48,14 +50,84 @@ impl TaskManager {
     }
 }
 
+pub struct NotificationState {
+    manager: Arc<dyn NotificationManager>,
+}
+
+#[tauri::command]
+async fn send_native_notification(
+    state: tauri::State<'_, NotificationState>,
+    title: String,
+    body: String,
+    project_id: String,
+    task_id: String,
+) -> Result<(), String> {
+    let builder = NotificationBuilder::new()
+        .title(&title)
+        .body(&body)
+        .set_user_info(HashMap::from([
+            ("projectId".into(), project_id),
+            ("taskId".into(), task_id),
+        ]));
+
+    state
+        .manager
+        .send_notification(builder)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .setup(|_app| {
+        .setup(|app| {
             // 后台预热 login shell 环境，避免第一次启动任务时阻塞
             std::thread::spawn(|| {
                 crate::app_settings::get_login_shell_path();
             });
+            // Windows: 设置进程级 AUMID，让桌面通知能正确关联到本应用
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::ffi::OsStrExt;
+                let aumid = std::ffi::OsStr::new("com.hanshutx.nezha\0")
+                    .encode_wide()
+                    .collect::<Vec<u16>>();
+                unsafe {
+                    windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
+                        windows::core::PCWSTR(aumid.as_ptr()),
+                    ).ok().unwrap_or_default();
+                }
+            }
+
+            let notif_manager =
+                get_notification_manager("com.hanshutx.nezha".into(), None);
+            {
+                use tauri::Emitter;
+                use tauri::Manager;
+                let app_handle = app.handle().clone();
+                let mgr = notif_manager.clone();
+                mgr.register(
+                    Box::new(move |response| {
+                        if matches!(response.action, NotificationResponseAction::Default) {
+                            let _ =
+                                app_handle.emit("notification-clicked", response.user_info.clone());
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }),
+                    vec![],
+                )
+                .unwrap_or_else(|e| {
+                    eprintln!("Failed to register notification click handler: {}", e);
+                });
+                app.manage(NotificationState {
+                    manager: notif_manager,
+                });
+            }
+
             Ok(())
         })
         .manage(TaskManager {
@@ -72,6 +144,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            send_native_notification,
             pty::run_task,
             pty::resume_task,
             pty::cancel_task,
@@ -123,6 +196,7 @@ pub fn run() {
             config::init_project_config,
             config::read_project_config,
             config::write_project_config,
+            config::set_hooks_consent,
             config::get_agent_config_file_path,
             config::read_agent_config_file,
             config::write_agent_config_file,

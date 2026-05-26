@@ -18,13 +18,15 @@ import {
   DEFAULT_TERMINAL_FONT_SIZE,
   clampTerminalFontSize,
   DEFAULT_TASK_DISPLAY_WINDOW,
+  DEFAULT_NOTIFICATION_SETTINGS,
+  normalizeNotificationSettings,
   normalizeTaskDisplayWindow,
 } from "./types";
 import {
   DEFAULT_UI_FONT,
   DEFAULT_MONO_FONT,
 } from "./types";
-import type { FontFamily } from "./types";
+import type { FontFamily, NotificationSettings } from "./types";
 import { WelcomePage } from "./components/WelcomePage";
 import { ProjectPage } from "./components/ProjectPage";
 import { useToast } from "./components/Toast";
@@ -129,6 +131,30 @@ function isLiveTerminalTaskStatus(status: TaskStatus): boolean {
   return status === "pending" || status === "running" || status === "input_required";
 }
 
+function isAttentionStatus(status: TaskStatus): boolean {
+  return status === "input_required" || status === "idle" || status === "detached" || status === "interrupted";
+}
+
+function shouldNotifyStatus(status: TaskStatus): boolean {
+  return status === "done" || status === "failed" || status === "idle" || status === "input_required";
+}
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 function getSystemPrefersDark() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
@@ -155,6 +181,40 @@ function getInitialFontFamily(key: string, fallback: FontFamily): FontFamily {
   return stored || fallback;
 }
 
+async function sendDesktopNotification(
+  title: string,
+  body: string,
+  projectId: string,
+  taskId: string,
+): Promise<void> {
+  try {
+    await invoke("send_native_notification", { title, body, projectId, taskId });
+    return;
+  } catch {
+    // Expected fallback path — Web Notification tried next
+  }
+
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+
+  try {
+    let perm = Notification.permission;
+    if (perm === "default") {
+      perm = await Notification.requestPermission();
+    }
+    if (perm !== "granted") {
+      // User denied or dismissed notification permission — silently skip
+      return;
+    }
+    const n = new window.Notification(title, { body });
+    n.onclick = () => {
+      n.close();
+      getCurrentWindow().setFocus().catch(console.error);
+    };
+  } catch (e) {
+    console.warn("Web Notification fallback failed:", e);
+  }
+}
+
 function App() {
   const { showToast } = useToast();
   const { t } = useI18n();
@@ -174,6 +234,23 @@ function App() {
   const [monoFontFamily, setMonoFontFamily] = useState<FontFamily>(() =>
     getInitialFontFamily("nezha:monoFontFamily", DEFAULT_MONO_FONT),
   );
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => {
+    try {
+      const stored = localStorage.getItem("nezha:notificationSettings");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return normalizeNotificationSettings(parsed);
+      }
+    } catch (e) { console.warn("Failed to parse notification settings:", e); }
+    return DEFAULT_NOTIFICATION_SETTINGS;
+  });
+  const handleNotificationSettingsChange = useCallback((settings: NotificationSettings) => {
+    setNotificationSettings(settings);
+    localStorage.setItem("nezha:notificationSettings", JSON.stringify(settings));
+    window.dispatchEvent(new CustomEvent("toast-position-changed"));
+  }, []);
+  const notifSettingsRef = useRef(notificationSettings);
+  notifSettingsRef.current = notificationSettings;
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -183,6 +260,37 @@ function App() {
 
   const tm = useTerminalManager();
   const pendingResumeStartsRef = useRef<Record<string, () => void>>({});
+
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+
+  const projectViewsRef = useRef(projectViews);
+  projectViewsRef.current = projectViews;
+
+  const isWindowActive = useRef(true);
+  useEffect(() => {
+    const handler = () => { isWindowActive.current = document.visibilityState === "visible"; };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
+  const navigateToTaskRef = useRef<(projectId: string, taskId: string) => void>(() => {});
+  navigateToTaskRef.current = (projectId: string, taskId: string) => {
+    const project = projects.find((p) => p.id === projectId);
+    if (!project) return;
+    setActiveProject(project);
+    mountProject(project.id);
+    updateProjectView(project.id, { selectedTaskId: taskId, isNewTask: false });
+    setTasks((prev) => {
+      const task = prev.find((t) => t.id === taskId);
+      if (!task?.hasUnreadEvent) return prev;
+      const next = prev.map((t) =>
+        t.id === taskId ? { ...t, hasUnreadEvent: undefined } : t,
+      );
+      persistProjectTasks(task.projectId, next, showToast, formatSaveTasksError);
+      return next;
+    });
+  };
 
   const formatSaveProjectsError = useCallback(
     (error: string) => t("toast.saveProjectsFailed", { error }),
@@ -307,17 +415,55 @@ function App() {
     init().catch(console.error);
   }, []);
 
+  const lastNotified = useRef<Record<string, { status: string; ts: number }>>({});
+
   // Tauri event listeners (agent-output is handled inside useTerminalManager)
   useEffect(() => {
-    const p1 = listen<{ task_id: string; status: TaskStatus; failure_reason?: string }>(
+    const p1 = listen<{ task_id: string; status: TaskStatus; failure_reason?: string; hook_event?: string; hook_message?: string }>(
       "task-status",
       (e) => {
-        const { task_id, status, failure_reason } = e.payload;
+        const { task_id, status, failure_reason, hook_event, hook_message } = e.payload;
         updateTaskStatus(task_id, status, undefined, failure_reason);
         if (!isActiveTaskStatus(status)) {
           tm.removeTaskBuffers([task_id]);
         }
         if (status === "done") scheduleForDoneTask(task_id);
+
+        if (shouldNotifyStatus(status) && hook_event) {
+          const ns = notifSettingsRef.current;
+          if (!ns.enabled || !ns.types[status as keyof typeof ns.types]) return;
+
+          const now = Date.now();
+          const prev = lastNotified.current[task_id];
+          if (prev && prev.status === status && now - prev.ts < 5000) return;
+          lastNotified.current[task_id] = { status, ts: now };
+
+          const task = tasksRef.current.find((t) => t.id === task_id);
+          if (!task) return;
+          const title = task.name ?? task.prompt.slice(0, 60);
+          const statusText =
+            status === "done" ? t("taskNotif.done")
+              : status === "failed" ? t("taskNotif.failed")
+              : status === "input_required" ? t("taskNotif.inputRequired")
+              : t("taskNotif.idle");
+          const body = hook_message
+            ? (() => {
+                const firstLine = stripMarkdown(hook_message).split("\n").find(l => l.trim()) || "";
+                return firstLine.length > 120 ? firstLine.slice(0, 117) + "..." : firstLine;
+              })()
+            : statusText;
+          const view = projectViewsRef.current[task.projectId];
+          const isSelected = view?.selectedTaskId === task_id;
+          const windowActive = isWindowActive.current;
+          const hasFocus = document.hasFocus();
+
+          if ((!windowActive || !hasFocus) && ns.system) {
+            sendDesktopNotification(title, body, task.projectId, task_id).catch(console.error);
+          } else if (!isSelected && ns.inApp) {
+            const toastType = status === "done" ? "success" : status === "failed" ? "error" : "info";
+            showToast(body, toastType, { onClick: () => navigateToTaskRef.current(task.projectId, task_id), playSound: ns.sound });
+          }
+        }
       },
     );
     const p2 = listen<{ task_id: string; session_id: string; session_path: string }>(
@@ -327,9 +473,16 @@ function App() {
         updateTaskSession(task_id, session_id, session_path);
       },
     );
+    const p3 = listen<{ projectId: string; taskId: string }>("notification-clicked", (event) => {
+      const { projectId, taskId } = event.payload;
+      if (projectId && taskId) {
+        navigateToTaskRef.current(projectId, taskId);
+      }
+    });
     return () => {
       p1.then((fn) => fn());
       p2.then((fn) => fn());
+      p3.then((fn) => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -373,7 +526,31 @@ function App() {
     setActiveProject(null);
   }
 
+  const hooksConsentShownRef = useRef<Set<string>>(new Set());
+
+  async function checkHooksConsent(projectPath: string) {
+    if (hooksConsentShownRef.current.has(projectPath)) return;
+    try {
+      const config = await invoke<{ agent: { hooks_consent?: boolean | null } }>("read_project_config", { projectPath });
+      const consent = config.agent?.hooks_consent;
+      if (consent === true || consent === false) return;
+      // Never set before — mark as asked + show one-time toast
+      hooksConsentShownRef.current.add(projectPath);
+      invoke("set_hooks_consent", { projectPath, consent: false }).catch(() => {});
+      showToast(t("notif.hooksConsentToast"), "info", {
+        persistent: true,
+        actionLabel: t("notif.hooksConsent"),
+        onClick: () => {
+          invoke("set_hooks_consent", { projectPath, consent: true }).catch(() => {});
+        },
+      });
+    } catch { /* read config failed */ }
+  }
+
   function invokeRunTask(task: Task, projectPath: string, images: string[]) {
+    if (task.agent === "claude") {
+      checkHooksConsent(projectPath);
+    }
     invoke("run_task", {
       taskId: task.id,
       projectPath,
@@ -881,15 +1058,19 @@ function App() {
         if (task.id !== taskId) return task;
         if (shouldIgnoreTaskStatusTransition(task.status, status)) return task;
 
-        const attentionRequestedAt =
-          status === "input_required" ? (extra?.attentionRequestedAt ?? Date.now()) : undefined;
+        const attentionRequestedAt = isAttentionStatus(status)
+          ? (extra?.attentionRequestedAt ?? Date.now())
+          : undefined;
 
         if (task.status === status && task.attentionRequestedAt === attentionRequestedAt) {
           return task;
         }
 
         changed = true;
-        const updated: Task = { ...task, status, attentionRequestedAt };
+        const hasUnreadEvent = isAttentionStatus(status) || status === "done" || status === "failed"
+          ? true
+          : undefined;
+        const updated: Task = { ...task, status, attentionRequestedAt, hasUnreadEvent };
         if (status === "failed" && failureReason) updated.failureReason = failureReason;
         return updated;
       });
@@ -978,9 +1159,18 @@ function App() {
               onNewTask={() =>
                 updateProjectView(project.id, { selectedTaskId: null, isNewTask: true })
               }
-              onSelectTask={(id) =>
-                updateProjectView(project.id, { selectedTaskId: id, isNewTask: false })
-              }
+              onSelectTask={(id) => {
+                updateProjectView(project.id, { selectedTaskId: id, isNewTask: false });
+                setTasks((prev) => {
+                  const task = prev.find((t) => t.id === id);
+                  if (!task?.hasUnreadEvent) return prev;
+                  const next = prev.map((t) =>
+                    t.id === id ? { ...t, hasUnreadEvent: undefined } : t,
+                  );
+                  persistProjectTasks(task.projectId, next, showToast, formatSaveTasksError);
+                  return next;
+                });
+              }}
               onDeleteTask={handleDeleteTask}
               onDeleteAllTasks={() => handleDeleteAllTasks(project)}
               onToggleTaskStar={handleToggleTaskStar}
@@ -1016,6 +1206,8 @@ function App() {
               onUiFontFamilyChange={setUiFontFamily}
               monoFontFamily={monoFontFamily}
               onMonoFontFamilyChange={setMonoFontFamily}
+              notificationSettings={notificationSettings}
+              onNotificationSettingsChange={handleNotificationSettingsChange}
             />
           );
         })}
@@ -1047,6 +1239,8 @@ function App() {
             onUiFontFamilyChange={setUiFontFamily}
             monoFontFamily={monoFontFamily}
             onMonoFontFamilyChange={setMonoFontFamily}
+            notificationSettings={notificationSettings}
+            onNotificationSettingsChange={handleNotificationSettingsChange}
           />
         </div>
       )}

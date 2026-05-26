@@ -83,12 +83,12 @@ export function TaskList({
     return tasks.filter((t) => t.prompt.toLowerCase().includes(q));
   }, [tasks, query]);
 
+  const isAttention = (t: Task) => t.attentionRequestedAt != null;
+
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      const aNeedsAttention =
-        a.status === "input_required" || a.status === "detached" || a.status === "interrupted";
-      const bNeedsAttention =
-        b.status === "input_required" || b.status === "detached" || b.status === "interrupted";
+      const aNeedsAttention = isAttention(a);
+      const bNeedsAttention = isAttention(b);
       if (aNeedsAttention && !bNeedsAttention) return -1;
       if (!aNeedsAttention && bNeedsAttention) return 1;
       if (aNeedsAttention && bNeedsAttention) {
@@ -118,11 +118,7 @@ export function TaskList({
     const earlierTasks: Task[] = [];
 
     for (const task of sorted) {
-      if (
-        task.status === "input_required" ||
-        task.status === "detached" ||
-        task.status === "interrupted"
-      ) {
+      if (isAttention(task)) {
         attentionTasks.push(task);
       } else if (
         task.status === "done" &&
@@ -136,7 +132,7 @@ export function TaskList({
         todoTasks.push(task);
       } else if (task.createdAt >= todayTs) {
         todayTasks.push(task);
-      } else if (task.createdAt >= cutoffTs) {
+      } else if (task.createdAt >= cutoffTs || task.status === "pending" || task.status === "running") {
         earlierTasks.push(task);
       }
     }
