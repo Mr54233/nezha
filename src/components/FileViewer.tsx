@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { marked } from "marked";
+import { Marked } from "marked";
 import DOMPurify from "dompurify";
 import * as Popover from "@radix-ui/react-popover";
-import { X, AlertCircle, Eye, PencilLine, MoreHorizontal } from "lucide-react";
+import { X, AlertCircle, Eye, PencilLine, MoreHorizontal, List, ChevronRight } from "lucide-react";
 import { getFileColor } from "../utils";
 import ReactCodeMirror, { EditorView } from "@uiw/react-codemirror";
 import { githubDark, githubLight } from "@uiw/codemirror-theme-github";
+import { solarizedLight } from "@uiw/codemirror-theme-solarized";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
 import { rust } from "@codemirror/lang-rust";
@@ -32,11 +33,44 @@ import { r } from "@codemirror/legacy-modes/mode/r";
 import type { Extension } from "@codemirror/state";
 import { ImagePreviewPane } from "./file-viewer/ImagePreviewPane";
 import type { OpenFileTab } from "../hooks/useProjectPanels";
+import type { ThemeVariant } from "../types";
 import { useI18n } from "../i18n";
 
 function isMarkdownFile(fileName: string): boolean {
   const ext = fileName.split(".").pop()?.toLowerCase();
   return ext === "md" || ext === "mdx" || ext === "markdown";
+}
+
+type TocEntry = { depth: number; text: string; id: string };
+
+// Render markdown to sanitized HTML and extract a table of contents in a single
+// pass, so heading ids in the HTML and the TOC anchors are guaranteed to match.
+function renderMarkdownWithToc(content: string): { html: string; toc: TocEntry[] } {
+  const used = new Set<string>();
+  const toc: TocEntry[] = [];
+  const instance = new Marked({
+    renderer: {
+      heading(token) {
+        const inlineHtml = this.parser.parseInline(token.tokens);
+        const plain = inlineHtml.replace(/<[^>]*>/g, "").trim();
+        const base =
+          plain
+            .toLowerCase()
+            .replace(/[^\w一-龥 -]/g, "")
+            .replace(/\s+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^-+|-+$/g, "") || "section";
+        let id = base;
+        let n = 1;
+        while (used.has(id)) id = `${base}-${n++}`;
+        used.add(id);
+        toc.push({ depth: token.depth, text: plain, id });
+        return `<h${token.depth} id="${id}">${inlineHtml}</h${token.depth}>\n`;
+      },
+    },
+  });
+  const html = instance.parse(content, { async: false }) as string;
+  return { html: DOMPurify.sanitize(html), toc };
 }
 
 function isPreviewableImageFile(fileName: string): boolean {
@@ -192,19 +226,69 @@ type ImagePreviewData = {
   byteLength: number;
 };
 
+function MarkdownToc({
+  toc,
+  activeId,
+  onJump,
+}: {
+  toc: TocEntry[];
+  activeId: string | null;
+  onJump: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(true);
+  const minDepth = useMemo(() => Math.min(...toc.map((entry) => entry.depth)), [toc]);
+
+  return (
+    <div className={`md-toc${open ? "" : " md-toc-collapsed"}`}>
+      <button
+        type="button"
+        className="md-toc-toggle"
+        onClick={() => setOpen((prev) => !prev)}
+        title={t("file.outline")}
+      >
+        {open ? <List size={13} /> : <ChevronRight size={13} />}
+        <span>{t("file.outline")}</span>
+      </button>
+      {open && (
+        <nav className="md-toc-list">
+          {toc.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              data-depth={Math.min(entry.depth - minDepth + 1, 6)}
+              className={`md-toc-item${activeId === entry.id ? " active" : ""}`}
+              onClick={() => onJump(entry.id)}
+              title={entry.text}
+            >
+              {entry.text}
+            </button>
+          ))}
+        </nav>
+      )}
+    </div>
+  );
+}
+
 function FilePreviewPane({
   filePath,
   fileName,
   projectPath,
-  isDark,
+  themeVariant,
   previewMode,
 }: {
   filePath: string;
   fileName: string;
   projectPath: string;
-  isDark: boolean;
+  themeVariant: ThemeVariant;
   previewMode: boolean;
 }) {
+  const editorTheme =
+    themeVariant === "dark"
+      ? githubDark
+      : themeVariant === "eyecare"
+        ? solarizedLight
+        : githubLight;
   const { t } = useI18n();
   const [content, setContent] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<ImagePreviewData | null>(null);
@@ -215,6 +299,38 @@ function FilePreviewPane({
   const isPreviewableImage = isPreviewableImageFile(fileName);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+  const showMarkdownPreview = isMarkdown && previewMode && content !== null;
+  const { html: markdownHtml, toc } = useMemo(
+    () => (isMarkdown && content !== null ? renderMarkdownWithToc(content) : { html: "", toc: [] }),
+    [isMarkdown, content],
+  );
+
+  const jumpToHeading = (id: string) => {
+    const target = scrollRef.current?.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root || !showMarkdownPreview || toc.length === 0) return;
+    const headings = toc
+      .map((entry) => root.querySelector<HTMLElement>(`#${CSS.escape(entry.id)}`))
+      .filter((el): el is HTMLElement => el !== null);
+    if (headings.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActiveHeadingId(visible[0].target.id);
+      },
+      { root, rootMargin: "0px 0px -65% 0px", threshold: 0 },
+    );
+    headings.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [showMarkdownPreview, toc]);
 
   useEffect(() => {
     let cancelled = false;
@@ -355,28 +471,22 @@ function FilePreviewPane({
             />
           ) : content !== null ? (
             isMarkdown && previewMode ? (
-              <div
-                style={{
-                  height: "100%",
-                  overflow: "auto",
-                  padding: "24px 32px",
-                  background: "var(--bg-panel)",
-                  minWidth: 0,
-                  minHeight: 0,
-                }}
-              >
-                <div
-                  className="md-preview"
-                  dangerouslySetInnerHTML={{
-                    __html: DOMPurify.sanitize(marked(content, { async: false }) as string),
-                  }}
-                />
-              </div>
+              <>
+                <div ref={scrollRef} className="md-preview-scroll">
+                  <div
+                    className="md-preview"
+                    dangerouslySetInnerHTML={{ __html: markdownHtml }}
+                  />
+                </div>
+                {toc.length > 0 && (
+                  <MarkdownToc toc={toc} activeId={activeHeadingId} onJump={jumpToHeading} />
+                )}
+              </>
             ) : (
               <ReactCodeMirror
                 value={content}
                 onChange={handleChange}
-                theme={isDark ? githubDark : githubLight}
+                theme={editorTheme}
                 extensions={extensions}
                 height="100%"
                 style={{ height: "100%" }}
@@ -400,13 +510,13 @@ function FilePreviewPane({
           alignItems: "center",
           padding: "0 12px",
           borderTop: "1px solid var(--border-dim)",
-          background: "var(--accent)",
+          background: "var(--bg-subtle)",
           flexShrink: 0,
           gap: 8,
         }}
       >
         <span
-          style={{ fontSize: 11, color: "var(--inverse-muted)", fontFamily: "var(--font-mono)" }}
+          style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
         >
           {filePath}
         </span>
@@ -415,7 +525,7 @@ function FilePreviewPane({
             style={{
               marginLeft: "auto",
               fontSize: 11,
-              color: saveStatus === "error" ? "var(--danger-fg)" : "var(--inverse-muted)",
+              color: saveStatus === "error" ? "var(--danger-fg)" : "var(--text-muted)",
               fontFamily: "var(--font-mono)",
             }}
           >
@@ -436,7 +546,7 @@ export function FileViewer({
   onCloseOtherTabs,
   onCloseTabsToRight,
   onCloseAllTabs,
-  isDark,
+  themeVariant,
   onRunMakeTarget: _onRunMakeTarget,
 }: {
   tabs: OpenFileTab[];
@@ -447,7 +557,7 @@ export function FileViewer({
   onCloseOtherTabs: (path: string) => void;
   onCloseTabsToRight: (path: string) => void;
   onCloseAllTabs: () => void;
-  isDark: boolean;
+  themeVariant: ThemeVariant;
   onRunMakeTarget?: (target: string) => void;
 }) {
   const { t } = useI18n();
@@ -717,7 +827,7 @@ export function FileViewer({
                 filePath={tab.path}
                 fileName={tab.name}
                 projectPath={projectPath}
-                isDark={isDark}
+                themeVariant={themeVariant}
                 previewMode={!!previewModes[tab.path]}
               />
             </div>

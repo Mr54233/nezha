@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { attachSmartCopy } from "./terminalCopyHelper";
-import type { TerminalFontSize, FontFamily } from "../types";
 import {
-  DARK_THEME,
-  LIGHT_THEME,
+  DEFAULT_SHIFT_ENTER_NEWLINE,
+  matchesTerminalNewline,
+  normalizeShiftEnterNewline,
+  TERMINAL_NEWLINE_SEQUENCE,
+} from "../shortcuts";
+import type { TerminalFontSize, FontFamily, ThemeVariant } from "../types";
+import {
+  themeFor,
   initTerminal,
   loadWebglAddon,
   safeFit,
@@ -25,7 +31,7 @@ interface TerminalViewProps {
     writeFn: ((data: string, callback?: () => void) => void) | null,
   ) => number;
   onReady?: (generation: number) => void;
-  isDark: boolean;
+  themeVariant: ThemeVariant;
   terminalFontSize: TerminalFontSize;
   monoFontFamily: FontFamily;
   isActive?: boolean;
@@ -39,7 +45,7 @@ export function TerminalView({
   onResize,
   onRegisterTerminal,
   onReady,
-  isDark,
+  themeVariant,
   terminalFontSize,
   monoFontFamily,
   isActive = true,
@@ -56,6 +62,7 @@ export function TerminalView({
   const onReadyRef = useRef(onReady);
   const onSnapshotRef = useRef(onSnapshot);
   const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const shiftEnterNewlineRef = useRef<boolean>(DEFAULT_SHIFT_ENTER_NEWLINE);
   onReadyRef.current = onReady;
   onSnapshotRef.current = onSnapshot;
 
@@ -77,7 +84,7 @@ export function TerminalView({
     if (!containerRef.current) return;
     const container = containerRef.current;
 
-    const { term, fitAddon } = initTerminal(isDark, 1000, terminalFontSize, monoFontFamily);
+    const { term, fitAddon } = initTerminal(themeVariant, 1000, terminalFontSize, monoFontFamily);
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
 
@@ -87,7 +94,7 @@ export function TerminalView({
     const disposeInputFix = attachMacWebKitShiftInputFix(term);
     loadWebglAddon(term);
 
-    const size = safeFit(fitAddon, term);
+    const size = safeFit(fitAddon, term, container);
     if (size) notifyResize(size.cols, size.rows);
 
     const focusTerminal = () => {
@@ -107,7 +114,7 @@ export function TerminalView({
     };
 
     window.requestAnimationFrame(() => {
-      const s = safeFit(fitAddon, term);
+      const s = safeFit(fitAddon, term, container);
       if (s) notifyResize(s.cols, s.rows);
       if (initialSnapshot) {
         term.write(initialSnapshot, () => {
@@ -126,7 +133,10 @@ export function TerminalView({
       completeRestore();
     });
 
-    const disposeSmartCopy = attachSmartCopy(term);
+    const disposeSmartCopy = attachSmartCopy(term, {
+      matchesNewline: (e) => matchesTerminalNewline(e, shiftEnterNewlineRef.current),
+      onNewline: () => onInputRef.current(TERMINAL_NEWLINE_SEQUENCE),
+    });
     const linuxIME = attachLinuxIMEFix(term, (data) => onInputRef.current(data));
     const disposeOnData = { dispose: () => linuxIME.dispose() };
 
@@ -138,7 +148,7 @@ export function TerminalView({
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
       window.requestAnimationFrame(() => {
-        const s = safeFit(fitAddon, term);
+        const s = safeFit(fitAddon, term, container);
         if (s) notifyResize(s.cols, s.rows);
         term.focus();
       });
@@ -151,7 +161,7 @@ export function TerminalView({
     const resizeObserver = new ResizeObserver(() => {
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        const s = safeFit(fitAddon, term);
+        const s = safeFit(fitAddon, term, container);
         if (s) notifyResize(s.cols, s.rows);
       }, 50);
     });
@@ -179,11 +189,30 @@ export function TerminalView({
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep the configured "insert newline" combo in sync with app settings.
+  // Mirrors NewTaskView: load once, then react to the global settings event.
+  useEffect(() => {
+    function loadNewlineShortcut() {
+      invoke<{ terminal_shift_enter_newline?: unknown }>("load_app_settings")
+        .then((settings) => {
+          shiftEnterNewlineRef.current = normalizeShiftEnterNewline(
+            settings.terminal_shift_enter_newline,
+          );
+        })
+        .catch(() => {
+          shiftEnterNewlineRef.current = DEFAULT_SHIFT_ENTER_NEWLINE;
+        });
+    }
+    loadNewlineShortcut();
+    window.addEventListener("nezha:app-settings-changed", loadNewlineShortcut);
+    return () => window.removeEventListener("nezha:app-settings-changed", loadNewlineShortcut);
+  }, []);
+
   useEffect(() => {
     if (!isActive) return;
     window.requestAnimationFrame(() => {
-      if (!fitAddonRef.current || !terminalRef.current) return;
-      const s = safeFit(fitAddonRef.current, terminalRef.current);
+      if (!fitAddonRef.current || !terminalRef.current || !containerRef.current) return;
+      const s = safeFit(fitAddonRef.current, terminalRef.current, containerRef.current);
       if (s) notifyResize(s.cols, s.rows);
       terminalRef.current.focus();
     });
@@ -197,19 +226,29 @@ export function TerminalView({
 
   useEffect(() => {
     if (terminalRef.current) {
-      terminalRef.current.options.theme = isDark ? DARK_THEME : LIGHT_THEME;
+      terminalRef.current.options.theme = themeFor(themeVariant);
     }
-  }, [isDark]);
+  }, [themeVariant]);
 
   useEffect(() => {
-    if (!terminalRef.current || !fitAddonRef.current) return;
-    const size = applyTerminalFontSize(terminalRef.current, fitAddonRef.current, terminalFontSize);
+    if (!terminalRef.current || !fitAddonRef.current || !containerRef.current) return;
+    const size = applyTerminalFontSize(
+      terminalRef.current,
+      fitAddonRef.current,
+      terminalFontSize,
+      containerRef.current,
+    );
     if (size) notifyResize(size.cols, size.rows);
   }, [terminalFontSize, notifyResize]);
 
   useEffect(() => {
-    if (!terminalRef.current || !fitAddonRef.current) return;
-    const size = applyTerminalFontFamily(terminalRef.current, fitAddonRef.current, monoFontFamily);
+    if (!terminalRef.current || !fitAddonRef.current || !containerRef.current) return;
+    const size = applyTerminalFontFamily(
+      terminalRef.current,
+      fitAddonRef.current,
+      monoFontFamily,
+      containerRef.current,
+    );
     if (size) notifyResize(size.cols, size.rows);
   }, [monoFontFamily, notifyResize]);
 

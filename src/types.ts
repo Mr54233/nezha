@@ -4,10 +4,13 @@ export interface Project {
   path: string;
   branch?: string;
   lastOpenedAt: number;
+  /** 为 true 时不在左侧常驻竖条显示，仅可从首页或「展开全部」抽屉访问。缺省=常驻。 */
+  hiddenFromRail?: boolean;
 }
 
 export type AgentType = "claude" | "codex";
-export type ThemeMode = "system" | "dark" | "light";
+export type ThemeMode = "system" | "dark" | "light" | "eyecare";
+export type ThemeVariant = "dark" | "light" | "eyecare";
 export type PermissionMode = "ask" | "auto_edit" | "full_access";
 export type TaskDisplayWindow = 3 | 7 | 15 | 30 | "all";
 
@@ -122,20 +125,18 @@ export function isActiveTaskStatus(status: TaskStatus): boolean {
 
 export interface NotificationItem {
   id: string;
-  notifType: "update" | "announcement" | "warning" | string;
   level: "info" | "warning" | "error" | string;
   title: string;
   body: string;
+  bodyZh: string | null;
   url: string | null;
   createdAt: string;
-  popup: boolean;
   isRead: boolean;
 }
 
 export interface NotificationResult {
   notifications: NotificationItem[];
   unreadCount: number;
-  hasUnreadPopup: boolean;
 }
 
 export interface UsageWindow {
@@ -164,4 +165,67 @@ export interface UsageSnapshot {
   claude: UsageSource<ClaudeUsageData>;
   codex: UsageSource<CodexUsageData>;
   fetchedAt: number;
+}
+
+// ── Skill Hub ────────────────────────────────────────────────────────────────
+
+export interface SkillHubConfig {
+  hubProjectId?: string;
+  hubPath?: string;
+  createdAt?: number;
+}
+
+export interface Skill {
+  /** SKILL 目录名（权威标识） */
+  name: string;
+  /** frontmatter 的 name 字段，可与目录名不同 */
+  displayName?: string;
+  /** 解析后的 description，可能包含换行 */
+  description?: string;
+  /** skill 目录绝对路径 */
+  path: string;
+  /** frontmatter 解析失败时的错误说明 */
+  hasError?: string;
+}
+
+export type SkillInstallationHealth = "ok" | "broken" | "diverged";
+
+export interface SkillInstallation {
+  skillName: string;
+  projectId: string;
+  agent: AgentType;
+  installedAt: number;
+  linkPath: string;
+  targetPath: string;
+  health?: SkillInstallationHealth;
+}
+
+export type SkillInstallStrategy = "detect" | "skip" | "overwrite" | "cancel";
+
+export interface SkillConflictInfo {
+  existingKind: "directory" | "file" | "symlink";
+  existingTarget?: string;
+  linkPath: string;
+}
+
+export interface SkillInstallResult {
+  ok: boolean;
+  conflict?: SkillConflictInfo;
+  alreadyInstalled?: boolean;
+  skipped?: boolean;
+  cancelled?: boolean;
+  installation?: SkillInstallation;
+}
+
+export interface SkillDeleteResult {
+  ok: boolean;
+  removedLinks: number;
+}
+
+export interface SetSkillHubResult {
+  config: SkillHubConfig;
+  project: Project;
+  createdNewProject: boolean;
+  /** 后端写入后的权威 projects 列表 */
+  projects: Project[];
 }

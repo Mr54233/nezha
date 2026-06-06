@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
-import { X, Keyboard, Monitor, Info, Settings as SettingsIcon, Type } from "lucide-react";
-import type { ThemeMode, TerminalFontSize, TaskDisplayWindow, FontFamily } from "../types";
+import { X, Keyboard, Monitor, Info, Settings as SettingsIcon, Type, Zap, Blocks } from "lucide-react";
+import type { ThemeMode, ThemeVariant, TerminalFontSize, TaskDisplayWindow, FontFamily } from "../types";
 import { useI18n } from "../i18n";
 import s from "../styles";
 import claudeLogo from "../assets/claude.svg";
@@ -11,6 +11,8 @@ import { GeneralPanel } from "./app-settings/GeneralPanel";
 import { ShortcutsPanel } from "./app-settings/ShortcutsPanel";
 import { ThemePanel } from "./app-settings/ThemePanel";
 import { FontPanel } from "./app-settings/FontPanel";
+import { HooksPanel } from "./app-settings/HooksPanel";
+import { SkillsPanel } from "./app-settings/SkillsPanel";
 import { getAgentSettingsFilePath } from "./app-settings/shared";
 import type { AgentKey, AppSettingsNavItem, NavKey, NavSection } from "./app-settings/types";
 
@@ -19,6 +21,8 @@ const NAV_ITEMS: AppSettingsNavItem[] = [
   { key: "theme", labelKey: "appSettings.theme", section: "application", icon: Monitor },
   { key: "fonts", labelKey: "appSettings.fonts", section: "application", icon: Type },
   { key: "shortcuts", labelKey: "appSettings.shortcuts", section: "application", icon: Keyboard },
+  { key: "hooks", labelKey: "appSettings.hooks", section: "application", icon: Zap },
+  { key: "skills", labelKey: "skill.settings.navLabel", section: "application", icon: Blocks },
   {
     key: "claude",
     labelKey: "Claude Code",
@@ -64,7 +68,7 @@ function NavItemIcon({ item, size }: { item: AppSettingsNavItem; size: number })
 
 export function AppSettingsDialog({
   onClose,
-  isDark,
+  themeVariant,
   themeMode,
   systemPrefersDark,
   onThemeModeChange,
@@ -72,13 +76,15 @@ export function AppSettingsDialog({
   onTerminalFontSizeChange,
   taskDisplayWindow,
   onTaskDisplayWindowChange,
+  attentionBadge,
+  onAttentionBadgeChange,
   uiFontFamily,
   onUiFontFamilyChange,
   monoFontFamily,
   onMonoFontFamilyChange,
 }: {
   onClose: () => void;
-  isDark: boolean;
+  themeVariant: ThemeVariant;
   themeMode: ThemeMode;
   systemPrefersDark: boolean;
   onThemeModeChange: (mode: ThemeMode) => void;
@@ -86,6 +92,8 @@ export function AppSettingsDialog({
   onTerminalFontSizeChange: (size: TerminalFontSize) => void;
   taskDisplayWindow: TaskDisplayWindow;
   onTaskDisplayWindowChange: (window: TaskDisplayWindow) => void;
+  attentionBadge: boolean;
+  onAttentionBadgeChange: (enabled: boolean) => void;
   uiFontFamily: FontFamily;
   onUiFontFamilyChange: (family: FontFamily) => void;
   monoFontFamily: FontFamily;
@@ -156,6 +164,8 @@ export function AppSettingsDialog({
               key="general"
               taskDisplayWindow={taskDisplayWindow}
               onTaskDisplayWindowChange={onTaskDisplayWindowChange}
+              attentionBadge={attentionBadge}
+              onAttentionBadgeChange={onAttentionBadgeChange}
             />
           ) : activeNav === "theme" ? (
             <ThemePanel
@@ -176,6 +186,10 @@ export function AppSettingsDialog({
             />
           ) : activeNav === "shortcuts" ? (
             <ShortcutsPanel key="shortcuts" />
+          ) : activeNav === "hooks" ? (
+            <HooksPanel key="hooks" />
+          ) : activeNav === "skills" ? (
+            <SkillsPanel key="skills" />
           ) : activeNav === "about" ? (
             <AboutPanel key="about" />
           ) : (
@@ -184,7 +198,7 @@ export function AppSettingsDialog({
               agentKey={activeNav as AgentKey}
               filePath={activeItem.filePath!}
               lang={activeItem.lang!}
-              isDark={isDark}
+              themeVariant={themeVariant}
             />
           )}
         </div>

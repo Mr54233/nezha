@@ -1,7 +1,7 @@
 {
   "name": "nezha",
   "private": true,
-  "version": "0.3.7",
+  "version": "0.4.0",
   "description": "An Agent-First Application For Vibe Coding",
   "author": "Hanshuaikang",
   "homepage": "https://github.com/hanshuaikang/nezha",
@@ -49,6 +49,7 @@
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@uiw/codemirror-theme-github": "^4.25.9",
+    "@uiw/codemirror-theme-solarized": "^4.25.9",
     "@uiw/react-codemirror": "^4.25.9",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",

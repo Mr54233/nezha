@@ -32,14 +32,12 @@ export function FileExplorer({
   projectPath,
   projectName,
   onFileSelect,
-  isDark: _isDark,
   active = true,
   width = 240,
 }: {
   projectPath: string;
   projectName: string;
   onFileSelect: (path: string, name: string) => void;
-  isDark: boolean;
   active?: boolean;
   width?: number;
 }) {
@@ -218,6 +216,11 @@ export function FileExplorer({
 
   const handleToggle = useCallback(
     (dirPath: string) => {
+      // Invalidate any in-flight auto-refresh: it captured a snapshot before this
+      // toggle and would otherwise apply that stale tree, collapsing the folder the
+      // user just expanded (issue #194).
+      refreshIdRef.current += 1;
+
       const current = findNode(nodesRef.current, dirPath);
       const shouldExpand = !current?.expanded;
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, ChevronsRight, Search } from "lucide-react";
+import { Plus, ChevronsRight, Search, PinOff } from "lucide-react";
 import type { Project, Task } from "../types";
 import { ProjectAvatar } from "./ProjectAvatar";
 import { useI18n } from "../i18n";
@@ -33,21 +33,37 @@ function getProjectStatus(tasks: Task[], projectId: string): ProjectStatus {
   return null;
 }
 
-function StatusBadge({ status }: { status: ProjectStatus }) {
+// 待确认(input_required)任务数——用于黄色数量角标
+function getAttentionCount(tasks: Task[], projectId: string): number {
+  return tasks.filter((t) => t.projectId === projectId && t.status === "input_required").length;
+}
+
+// 项目状态指示:启用角标且存在待确认任务时显示数量角标,否则回退为小圆点。
+// borderColor 用于与所在容器背景描边融合(rail 与 drawer 背景不同)。
+function AttentionIndicator({
+  status,
+  count,
+  showBadge,
+  borderColor,
+}: {
+  status: ProjectStatus;
+  count: number;
+  showBadge: boolean;
+  borderColor: string;
+}) {
   if (!status) return null;
   const isAttention = status === "attention";
+  if (showBadge && isAttention && count > 0) {
+    return (
+      <span style={{ ...s.railAttentionBadge, borderColor }}>{count > 99 ? "99+" : count}</span>
+    );
+  }
   return (
     <span
       style={{
-        position: "absolute",
-        bottom: -1,
-        right: -1,
-        width: 9,
-        height: 9,
-        borderRadius: "50%",
+        ...s.railStatusDot,
         background: isAttention ? "var(--color-warning)" : "var(--color-success)",
-        border: "2px solid var(--bg-sidebar)",
-        boxSizing: "border-box" as const,
+        borderColor,
       }}
     />
   );
@@ -57,11 +73,15 @@ function RailItem({
   project,
   isActive,
   status,
+  attentionCount,
+  showBadge,
   onSwitch,
 }: {
   project: Project;
   isActive: boolean;
   status: ProjectStatus;
+  attentionCount: number;
+  showBadge: boolean;
   onSwitch: (p: Project) => void;
 }) {
   const [hov, setHov] = useState(false);
@@ -95,7 +115,12 @@ function RailItem({
       }}
     >
       <ProjectAvatar name={project.name} size={28} />
-      <StatusBadge status={status} />
+      <AttentionIndicator
+        status={status}
+        count={attentionCount}
+        showBadge={showBadge}
+        borderColor="var(--bg-sidebar)"
+      />
     </button>
   );
 }
@@ -104,12 +129,14 @@ function ProjectDrawer({
   projects,
   allTasks,
   activeProjectId,
+  showBadge,
   onSwitch,
   onClose,
 }: {
   projects: Project[];
   allTasks: Task[];
   activeProjectId: string;
+  showBadge: boolean;
   onSwitch: (p: Project) => void;
   onClose: () => void;
 }) {
@@ -205,6 +232,7 @@ function ProjectDrawer({
         )}
         {filteredProjects.map((project) => {
           const status = getProjectStatus(allTasks, project.id);
+          const attentionCount = getAttentionCount(allTasks, project.id);
           const isActive = project.id === activeProjectId;
           return (
             <button
@@ -236,22 +264,12 @@ function ProjectDrawer({
             >
               <div style={{ position: "relative", flexShrink: 0 }}>
                 <ProjectAvatar name={project.name} size={28} />
-                {status && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      bottom: -1,
-                      right: -1,
-                      width: 9,
-                      height: 9,
-                      borderRadius: "50%",
-                      background:
-                        status === "attention" ? "var(--color-warning)" : "var(--color-success)",
-                      border: "2px solid var(--bg-panel)",
-                      boxSizing: "border-box",
-                    }}
-                  />
-                )}
+                <AttentionIndicator
+                  status={status}
+                  count={attentionCount}
+                  showBadge={showBadge}
+                  borderColor="var(--bg-panel)"
+                />
               </div>
               <span
                 style={{
@@ -265,6 +283,14 @@ function ProjectDrawer({
               >
                 {project.name}
               </span>
+              {project.hiddenFromRail && (
+                <PinOff
+                  size={12}
+                  strokeWidth={2}
+                  color="var(--text-hint)"
+                  style={s.railHiddenIcon}
+                />
+              )}
             </button>
           );
         })}
@@ -277,19 +303,29 @@ export function ProjectRail({
   projects,
   allTasks,
   activeProjectId,
+  attentionBadge = true,
   onSwitch,
   onOpen,
+  singleProjectMode = false,
 }: {
   projects: Project[];
   allTasks: Task[];
   activeProjectId: string;
+  attentionBadge?: boolean;
   onSwitch: (project: Project) => void;
   onOpen: () => void;
+  singleProjectMode?: boolean;
 }) {
   const { t } = useI18n();
   const [addHov, setAddHov] = useState(false);
   const [expandHov, setExpandHov] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // 竖条只显示常驻项目；当前激活项目即使被设为非常驻也始终保留，避免失去当前上下文。
+  const railProjects = useMemo(
+    () => projects.filter((p) => !p.hiddenFromRail || p.id === activeProjectId),
+    [projects, activeProjectId],
+  );
 
   return (
     <div
@@ -309,12 +345,14 @@ export function ProjectRail({
         zIndex: drawerOpen ? 50 : "auto",
       }}
     >
-      {projects.map((project) => (
+      {railProjects.map((project) => (
         <RailItem
           key={project.id}
           project={project}
           isActive={project.id === activeProjectId}
           status={getProjectStatus(allTasks, project.id)}
+          attentionCount={getAttentionCount(allTasks, project.id)}
+          showBadge={attentionBadge}
           onSwitch={(p) => {
             onSwitch(p);
             setDrawerOpen(false);
@@ -324,66 +362,71 @@ export function ProjectRail({
 
       <div style={{ flex: 1 }} />
 
-      <button
-        title={t("project.showAllProjects")}
-        onClick={() => setDrawerOpen((v) => !v)}
-        onMouseEnter={() => setExpandHov(true)}
-        onMouseLeave={() => setExpandHov(false)}
-        style={{
-          width: 32,
-          height: 32,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: drawerOpen ? "var(--accent-subtle)" : expandHov ? "var(--bg-hover)" : "none",
-          border: "none",
-          borderRadius: 8,
-          cursor: "pointer",
-          color: drawerOpen
-            ? "var(--accent)"
-            : expandHov
-              ? "var(--text-muted)"
-              : "var(--text-hint)",
-          transition: "background 0.12s, color 0.12s",
-        }}
-      >
-        <ChevronsRight
-          size={14}
-          strokeWidth={2.5}
-          style={{
-            transform: drawerOpen ? "rotate(180deg)" : "none",
-            transition: "transform 0.18s",
-          }}
-        />
-      </button>
+      {!singleProjectMode ? (
+        <>
+          <button
+            title={t("project.showAllProjects")}
+            onClick={() => setDrawerOpen((v) => !v)}
+            onMouseEnter={() => setExpandHov(true)}
+            onMouseLeave={() => setExpandHov(false)}
+            style={{
+              width: 32,
+              height: 32,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: drawerOpen ? "var(--accent-subtle)" : expandHov ? "var(--bg-hover)" : "none",
+              border: "none",
+              borderRadius: 8,
+              cursor: "pointer",
+              color: drawerOpen
+                ? "var(--accent)"
+                : expandHov
+                  ? "var(--text-muted)"
+                  : "var(--text-hint)",
+              transition: "background 0.12s, color 0.12s",
+            }}
+          >
+            <ChevronsRight
+              size={14}
+              strokeWidth={2.5}
+              style={{
+                transform: drawerOpen ? "rotate(180deg)" : "none",
+                transition: "transform 0.18s",
+              }}
+            />
+          </button>
 
-      <button
-        title={t("welcome.openProject")}
-        onClick={onOpen}
-        onMouseEnter={() => setAddHov(true)}
-        onMouseLeave={() => setAddHov(false)}
-        style={{
-          width: 32,
-          height: 32,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: addHov ? "var(--bg-hover)" : "var(--bg-card)",
-          border: "1px solid var(--border-medium)",
-          borderRadius: 8,
-          cursor: "pointer",
-          color: addHov ? "var(--text-primary)" : "var(--text-muted)",
-          transition: "background 0.12s, color 0.12s",
-        }}
-      >
-        <Plus size={14} strokeWidth={2.5} />
-      </button>
+          <button
+            title={t("welcome.openProject")}
+            onClick={onOpen}
+            onMouseEnter={() => setAddHov(true)}
+            onMouseLeave={() => setAddHov(false)}
+            style={{
+              width: 32,
+              height: 32,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: addHov ? "var(--bg-hover)" : "var(--bg-card)",
+              border: "1px solid var(--border-medium)",
+              borderRadius: 8,
+              cursor: "pointer",
+              color: addHov ? "var(--text-primary)" : "var(--text-muted)",
+              transition: "background 0.12s, color 0.12s",
+            }}
+          >
+            <Plus size={14} strokeWidth={2.5} />
+          </button>
+        </>
+      ) : null}
 
-      {drawerOpen && (
+      {drawerOpen && !singleProjectMode && (
         <ProjectDrawer
           projects={projects}
           allTasks={allTasks}
           activeProjectId={activeProjectId}
+          showBadge={attentionBadge}
           onSwitch={onSwitch}
           onClose={() => setDrawerOpen(false)}
         />

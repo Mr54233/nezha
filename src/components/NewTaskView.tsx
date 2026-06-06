@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { TriangleAlert, Sparkles } from "lucide-react";
 import type { Project, AgentType, PermissionMode } from "../types";
+import type { HookAgentReadiness } from "./app-settings/types";
 import { useToast } from "./Toast";
 import {
   MentionPopover,
@@ -15,6 +16,7 @@ import {
   type PromptEditorContent,
 } from "./new-task/PromptEditor";
 import { ImageAttachments } from "./new-task/ImageAttachments";
+import { TextAttachments, type PastedText } from "./new-task/TextAttachments";
 import { AgentPermSelector } from "./new-task/AgentPermSelector";
 import { LaunchModeSelector, type LaunchMode } from "./new-task/LaunchModeSelector";
 import { useI18n } from "../i18n";
@@ -40,6 +42,7 @@ export interface NewTaskDraft {
   permMode: PermissionMode;
   planMode: boolean;
   pastedImages: PastedImage[];
+  pastedTexts?: PastedText[];
   launchMode?: LaunchMode;
   baseBranch?: string;
 }
@@ -76,6 +79,7 @@ export function NewTaskView({
     agent: AgentType;
     permissionMode: PermissionMode;
     images: string[];
+    texts: string[];
     immediate: boolean;
     launchMode: LaunchMode;
     baseBranch: string;
@@ -101,10 +105,14 @@ export function NewTaskView({
   const [pastedImages, setPastedImages] = useState<PastedImage[]>(
     initialDraft?.pastedImages ?? [],
   );
+  const [pastedTexts, setPastedTexts] = useState<PastedText[]>(
+    initialDraft?.pastedTexts ?? [],
+  );
   const [isEmpty, setIsEmpty] = useState(
     () =>
       !(initialDraft?.promptHtml ?? "").replace(/<[^>]+>/g, "").trim() &&
-      (initialDraft?.pastedImages.length ?? 0) === 0,
+      (initialDraft?.pastedImages.length ?? 0) === 0 &&
+      (initialDraft?.pastedTexts?.length ?? 0) === 0,
   );
   const [sendShortcut, setSendShortcut] = useState<SendShortcut>(DEFAULT_SEND_SHORTCUT);
 
@@ -131,10 +139,10 @@ export function NewTaskView({
   // Cache draft on unmount so reopening the new-task view restores work in progress.
   // Cleared after submit to avoid re-restoring the just-sent prompt.
   const submittedRef = useRef(false);
-  const draftDataRef = useRef({ agent, permMode, planMode, pastedImages, launchMode, baseBranch });
+  const draftDataRef = useRef({ agent, permMode, planMode, pastedImages, pastedTexts, launchMode, baseBranch });
   useEffect(() => {
-    draftDataRef.current = { agent, permMode, planMode, pastedImages, launchMode, baseBranch };
-  }, [agent, permMode, planMode, pastedImages, launchMode, baseBranch]);
+    draftDataRef.current = { agent, permMode, planMode, pastedImages, pastedTexts, launchMode, baseBranch };
+  }, [agent, permMode, planMode, pastedImages, pastedTexts, launchMode, baseBranch]);
   useEffect(() => {
     return () => {
       if (!onCacheDraft) return;
@@ -144,7 +152,7 @@ export function NewTaskView({
       }
       const data = draftDataRef.current;
       const editorContent = editorContentRef.current;
-      if (!editorContent.text.trim() && !editorContent.hasChips && data.pastedImages.length === 0) {
+      if (!editorContent.text.trim() && !editorContent.hasChips && data.pastedImages.length === 0 && data.pastedTexts.length === 0) {
         onCacheDraft(null);
         return;
       }
@@ -154,6 +162,7 @@ export function NewTaskView({
         permMode: data.permMode,
         planMode: data.planMode,
         pastedImages: data.pastedImages,
+        pastedTexts: data.pastedTexts,
         launchMode: data.launchMode,
         baseBranch: data.baseBranch,
       });
@@ -206,6 +215,43 @@ export function NewTaskView({
       .then(() => setHasMdFile(true))
       .catch(() => setHasMdFile(false));
   }, [project.path, agent]);
+
+  // Hook 就绪状态：版本过低 / 无 node 时软提示用户(任务仍可启动,已回退轮询)。
+  const [hookReadiness, setHookReadiness] = useState<HookAgentReadiness[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<HookAgentReadiness[]>("get_hook_readiness")
+      .then((r) => {
+        if (!cancelled) setHookReadiness(r);
+      })
+      .catch(() => {
+        if (!cancelled) setHookReadiness([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const agentReadiness = hookReadiness?.find((r) => r.agent === agent) ?? null;
+  const hookBanner = (() => {
+    if (!agentReadiness || agentReadiness.usable) return null;
+    const agentName = agent === "claude" ? "Claude Code" : "Codex";
+    if (agentReadiness.reason === "version_too_low") {
+      return t("newTask.hookVersionLow", {
+        agent: agentName,
+        detected: agentReadiness.detectedVersion,
+        min: agentReadiness.minVersion,
+      });
+    }
+    if (agentReadiness.reason === "no_node") {
+      return t("newTask.hookNoNode");
+    }
+    if (agentReadiness.reason === "not_installed") {
+      return t("newTask.hookNotInstalled", { agent: agentName });
+    }
+    return null;
+  })();
 
   // Load current project file list
   useEffect(() => {
@@ -320,6 +366,7 @@ export function NewTaskView({
       agent,
       permissionMode: permMode,
       images: [],
+      texts: [],
       immediate: true,
       launchMode: "local",
       baseBranch: "",
@@ -328,7 +375,7 @@ export function NewTaskView({
 
   function handleSubmit(immediate: boolean) {
     const text = editorHandle.serialize();
-    if (!text && pastedImages.length === 0) return;
+    if (!text && pastedImages.length === 0 && pastedTexts.length === 0 && !immediate) return;
     if (!immediate && launchMode === "worktree") {
       showToast(t("newTask.worktreeMustSend"), "warning");
       return;
@@ -340,6 +387,7 @@ export function NewTaskView({
       agent,
       permissionMode: permMode,
       images: pastedImages.map((img) => img.dataUrl),
+      texts: pastedTexts.map((t) => t.text),
       immediate,
       launchMode,
       baseBranch,
@@ -348,6 +396,7 @@ export function NewTaskView({
     setIsEmpty(true);
     setMentionSearch(null);
     setPastedImages([]);
+    setPastedTexts([]);
   }
 
   // Handle image paste at this level (PromptEditor delegates image items up)
@@ -431,6 +480,14 @@ export function NewTaskView({
         </div>
       )}
 
+      {/* Hook fallback / upgrade hint (soft — does not block task start) */}
+      {hookBanner && (
+        <div style={s.agentMissingMdBanner}>
+          <TriangleAlert size={15} style={s.hookFallbackIcon} />
+          <div style={s.hookFallbackText}>{hookBanner}</div>
+        </div>
+      )}
+
       {/* Compose card */}
       <div style={{ ...s.composeCard, position: "relative" }} onPaste={handleEditorPaste}>
         {/* Mention dropdown */}
@@ -472,13 +529,45 @@ export function NewTaskView({
           onContentChange={(content) => {
             editorContentRef.current = content;
           }}
+          onPasteLargeText={(text) => {
+            setPastedTexts((prev) => [...prev, { id: `${Date.now()}-${Math.random()}`, text }]);
+            setIsEmpty(false);
+          }}
         />
 
-        {/* Image previews */}
-        <ImageAttachments
-          images={pastedImages}
-          onRemove={(id) => setPastedImages((prev) => prev.filter((i) => i.id !== id))}
-        />
+        {/* Attachment previews (images + pasted text on a single row) */}
+        {(pastedImages.length > 0 || pastedTexts.length > 0) && (
+          <div style={s.attachmentsRow}>
+            <ImageAttachments
+              images={pastedImages}
+              onRemove={(id) => {
+                setPastedImages((prev) => {
+                  const next = prev.filter((i) => i.id !== id);
+                  if (next.length === 0 && pastedTexts.length === 0) {
+                    const text = editorContentRef.current.text;
+                    const hasChips = editorContentRef.current.hasChips;
+                    setIsEmpty(!text.trim() && !hasChips);
+                  }
+                  return next;
+                });
+              }}
+            />
+            <TextAttachments
+              texts={pastedTexts}
+              onRemove={(id) => {
+                setPastedTexts((prev) => {
+                  const next = prev.filter((t) => t.id !== id);
+                  if (next.length === 0 && pastedImages.length === 0) {
+                    const text = editorContentRef.current.text;
+                    const hasChips = editorContentRef.current.hasChips;
+                    setIsEmpty(!text.trim() && !hasChips);
+                  }
+                  return next;
+                });
+              }}
+            />
+          </div>
+        )}
 
         {/* Toolbar */}
         <AgentPermSelector
@@ -486,7 +575,7 @@ export function NewTaskView({
           permMode={permMode}
           planMode={planMode}
           isEmpty={isEmpty}
-          hasImages={pastedImages.length > 0}
+          hasImages={pastedImages.length > 0 || pastedTexts.length > 0}
           saveAsTodoDisabledReason={
             launchMode === "worktree" ? t("newTask.worktreeMustSend") : undefined
           }

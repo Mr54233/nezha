@@ -9,7 +9,7 @@ import {
   Moon,
   Sun,
 } from "lucide-react";
-import type { Project, Task, ThemeMode, TerminalFontSize, TaskDisplayWindow, FontFamily } from "../types";
+import type { Project, Task, ThemeMode, ThemeVariant, TerminalFontSize, TaskDisplayWindow, FontFamily } from "../types";
 import { ProjectAvatar } from "./ProjectAvatar";
 import { SidebarFooterActions } from "./SidebarFooterActions";
 import { BranchBar } from "./task-panel/BranchBar";
@@ -29,7 +29,8 @@ export function TaskPanel({
   onToggleTaskStar,
   onRunTodo,
   onBack,
-  isDark,
+  backTitle,
+  themeVariant,
   themeMode,
   systemPrefersDark,
   onThemeModeChange,
@@ -38,6 +39,8 @@ export function TaskPanel({
   onTerminalFontSizeChange,
   taskDisplayWindow,
   onTaskDisplayWindowChange,
+  attentionBadge,
+  onAttentionBadgeChange,
   uiFontFamily,
   onUiFontFamilyChange,
   monoFontFamily,
@@ -57,7 +60,8 @@ export function TaskPanel({
   onToggleTaskStar: (id: string) => void;
   onRunTodo: (task: Task) => void;
   onBack: () => void;
-  isDark: boolean;
+  backTitle?: string;
+  themeVariant: ThemeVariant;
   themeMode: ThemeMode;
   systemPrefersDark: boolean;
   onThemeModeChange: (mode: ThemeMode) => void;
@@ -66,6 +70,8 @@ export function TaskPanel({
   onTerminalFontSizeChange: (size: TerminalFontSize) => void;
   taskDisplayWindow: TaskDisplayWindow;
   onTaskDisplayWindowChange: (window: TaskDisplayWindow) => void;
+  attentionBadge: boolean;
+  onAttentionBadgeChange: (enabled: boolean) => void;
   uiFontFamily: FontFamily;
   onUiFontFamilyChange: (family: FontFamily) => void;
   monoFontFamily: FontFamily;
@@ -76,6 +82,7 @@ export function TaskPanel({
 }) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
+  const isDark = themeVariant === "dark";
   const hasAttention = tasks.some(
     (t) => t.status === "input_required" || t.status === "detached" || t.status === "interrupted",
   );
@@ -127,7 +134,7 @@ export function TaskPanel({
     <div style={s.taskPanel}>
       {/* Project header */}
       <div style={s.panelHeader}>
-        <button style={s.backBtn} onClick={onBack} title={t("task.switchProject")}>
+        <button style={s.backBtn} onClick={onBack} title={backTitle ?? t("task.switchProject")}>
           <ChevronLeft size={15} strokeWidth={2} />
         </button>
         <ProjectAvatar name={project.name} size={22} />
@@ -202,7 +209,7 @@ export function TaskPanel({
       />
       <div style={s.taskPanelFooter}>
         <SidebarFooterActions
-          isDark={isDark}
+          themeVariant={themeVariant}
           themeMode={themeMode}
           systemPrefersDark={systemPrefersDark}
           onThemeModeChange={onThemeModeChange}
@@ -211,6 +218,8 @@ export function TaskPanel({
           onTerminalFontSizeChange={onTerminalFontSizeChange}
           taskDisplayWindow={taskDisplayWindow}
           onTaskDisplayWindowChange={onTaskDisplayWindowChange}
+          attentionBadge={attentionBadge}
+          onAttentionBadgeChange={onAttentionBadgeChange}
           uiFontFamily={uiFontFamily}
           onUiFontFamilyChange={onUiFontFamilyChange}
           monoFontFamily={monoFontFamily}
